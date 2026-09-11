@@ -14,7 +14,7 @@ muON-DTN operates as an application-level protocol stack executing atop the modu
 
 ---
 
-## Architectural Architecture
+## Architectural Overview
 
 ```
 +-------------------------------------------------------------------------+
