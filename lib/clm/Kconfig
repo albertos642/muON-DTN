@@ -1,0 +1,23 @@
+# @file Kconfig
+# @brief Configuration menu for Convergence Layer Manager maximum adapters.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_CLM
+    bool "Convergence Layer Manager (CLM)"
+    default y
+    help
+      Enable the Convergence Layer Manager orchestrating physical network adapters.
+
+if MUON_CLM
+
+config MUON_CLM_MAX_ADAPTERS
+    int "Maximum registered convergence layer adapters"
+    default 4
+    range 1 8
+    help
+      Maximum number of active convergence layer adapters supported simultaneously.
+
+endif # MUON_CLM

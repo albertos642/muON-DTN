@@ -1,0 +1,8 @@
+# @file dependencies.txt
+# @brief PlatformIO library dependencies required by the LoRa Convergence Layer.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+jgromes/RadioLib @ ^7.6.0

@@ -1,0 +1,104 @@
+# @file Kconfig
+# @brief Kconfig options for LoRa RF parameters, modem selection, and duty cycle limits.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_LORA_CL_ENABLED
+    bool "Enable LoRa Convergence Layer (LoRaCL)"
+    default y
+    help
+      Enables the LoRa Convergence Layer (L2.5) for long-range DTN bundle transfers.
+
+if MUON_LORA_CL_ENABLED
+
+    config MUON_LORA_LINK_ID
+        int "Logical Link ID in CLM"
+        default 0
+        range 0 7
+        help
+          Unique Link ID assigned to this LoRa Convergence Layer in CLM and Routing.
+
+    choice
+        prompt "LoRa Modem Hardware Driver"
+        default MUON_LORA_MODEM_SX1276
+        help
+          Select the physical LoRa transceiver chip.
+
+        config MUON_LORA_MODEM_SX1276
+            bool "Semtech SX1276 (e.g. Adafruit Feather M0 RFM95W)"
+
+        config MUON_LORA_MODEM_SX1278
+            bool "Semtech SX1278 (433MHz)"
+
+        config MUON_LORA_MODEM_SX1272
+            bool "Semtech SX1272"
+
+        config MUON_LORA_MODEM_SX1262
+            bool "Semtech SX1262"
+
+        config MUON_LORA_MODEM_MOCK
+            bool "Mock Modem (Simulation / Native)"
+    endchoice
+
+    config MUON_LORA_PIN_CS
+        int "SPI Chip Select (NSS) Pin"
+        default 8
+
+    config MUON_LORA_PIN_DIO0
+        int "DIO0 (IRQ) Pin"
+        default 3
+
+    config MUON_LORA_PIN_RESET
+        int "Reset (RST) Pin"
+        default 4
+
+    config MUON_LORA_PIN_DIO1
+        int "DIO1 Pin (SX1262 only)"
+        default 6
+
+    config MUON_LORA_FREQ_MHZ
+        int "Carrier Frequency (MHz)"
+        default 868
+        help
+          Standard European SRD band frequency (868 MHz) or 434 MHz.
+
+    config MUON_LORA_SF
+        int "Spreading Factor (SF)"
+        default 9
+        range 6 12
+
+    config MUON_LORA_BW_KHZ
+        int "Bandwidth (kHz)"
+        default 250
+
+    config MUON_LORA_CR
+        int "Coding Rate denominator (5=4/5, 6=4/6, 7=4/7, 8=4/8)"
+        default 5
+        range 5 8
+
+    config MUON_LORA_TX_POWER_DBM
+        int "Transmit Power (dBm)"
+        default 14
+        range 2 20
+
+    config MUON_LORA_DUTY_CYCLE_ENABLED
+        bool "Enforce ETSI 1% Duty Cycle Token Bucket"
+        default y
+        help
+          Enforces maximum 1% Time-on-Air over a 1-hour window (36,000 ms limit).
+
+    config MUON_LORA_REASSEMBLY_TIMEOUT_MS
+        int "Reassembly Timeout (ms)"
+        default 5000
+        help
+          Maximum time to wait for all bundle segments before aborting reassembly.
+
+    config MUON_LORA_ACK_TIMEOUT_MS
+        int "Block-ACK Timeout (ms)"
+        default 3000
+        help
+          Timeout waiting for BDL_XFER_ACK in Notified Service Class.
+
+endif

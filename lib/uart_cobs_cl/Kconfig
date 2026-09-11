@@ -1,0 +1,33 @@
+# @file Kconfig
+# @brief Configuration options for UART baudrate, port selection, and timeouts.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_UART_COBS_CL_ENABLED
+    bool "Enable UART-COBS Convergence Layer (UARTCL-COBS)"
+    default y
+    help
+      Enables the COBS-framed UART Convergence Layer (L2.5) with CRC-16 CCITT-FALSE.
+
+if MUON_UART_COBS_CL_ENABLED
+
+    config MUON_UART_COBS_LINK_ID
+        int "Logical Link ID in CLM"
+        default 1
+        range 0 7
+        help
+          Unique Link ID assigned to this UART-COBS Convergence Layer in CLM and Routing.
+
+    config MUON_UART_COBS_BAUDRATE
+        int "Serial Baudrate"
+        default 115200
+
+    config MUON_UART_COBS_TIME_SYNC_ENABLED
+        bool "Enable DTN Epoch Time Synchronization"
+        default y
+        help
+          Requests and accepts time sync frames (UARTCL_FLAG_SYNC) from the Gateway.
+
+endif

@@ -1,0 +1,23 @@
+# @file Kconfig
+# @brief Kconfig options for maximum static routes and default link selection.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_ROUTING
+    bool "Static Routing Engine"
+    default y
+    help
+      Enable the Static Routing Engine for IPN endpoint mapping to physical links.
+
+if MUON_ROUTING
+
+config MUON_ROUTING_MAX_STATIC_ROUTES
+    int "Maximum static route table entries"
+    default 8
+    range 2 32
+    help
+      Maximum number of static routes maintained in fast O(1) table.
+
+endif # MUON_ROUTING

@@ -1,0 +1,52 @@
+# @file Kconfig
+# @brief Root configuration menu for muON-DTN application stack and node role selection.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+# muON-DTN Firmware Configuration
+mainmenu "muON-DTN Firmware Configuration"
+
+menu "muON Application Settings"
+    config MUON_APP_VERSION
+        string "muON Firmware Version"
+        default "0.1.0"
+        help
+          Version identifier for muON application stack.
+
+    choice
+        prompt "Paper Experiment Node Role"
+        default MUON_NODE_ROLE_A
+        help
+          Select role for reproducing the paper experiment between two Adafruit Feather M0 boards.
+
+        config MUON_NODE_ROLE_A
+            bool "Node A (Sensor Source: EID ipn:1.1)"
+
+        config MUON_NODE_ROLE_B
+            bool "Node B (Gateway / Relay: EID ipn:2.1)"
+    endchoice
+
+    config MUON_LOCAL_NODE_ID
+        int "Local Node Number"
+        default 1 if MUON_NODE_ROLE_A
+        default 2 if MUON_NODE_ROLE_B
+
+    config MUON_REMOTE_NODE_ID
+        int "Remote Destination Node Number"
+        default 2 if MUON_NODE_ROLE_A
+        default 1 if MUON_NODE_ROLE_B
+endmenu
+
+menu "muON Network Layer"
+    orsource "lib/bpa/Kconfig"
+    orsource "lib/clm/Kconfig"
+    orsource "lib/routing/Kconfig"
+    orsource "lib/lora_cl/Kconfig"
+    orsource "lib/uart_cobs_cl/Kconfig"
+endmenu
+
+# Include underlying GGG Core Framework configuration
+orsource "../ggg/Kconfig"
+

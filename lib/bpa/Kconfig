@@ -1,0 +1,42 @@
+# @file Kconfig
+# @brief Configuration menu for BPA retention, metadata capacity, and retries.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_BPA
+    bool "Bundle Protocol Agent (BPA) & CBOR Engine"
+    default y
+    help
+      Enable the DTN Bundle Protocol Agent (RFC 9171) and CBOR Serialization Engine.
+
+if MUON_BPA
+
+config MUON_BPA_MAX_BUNDLE_METADATA
+    int "Maximum active bundle metadata entries"
+    default 16
+    range 4 64
+    help
+      Fixed-size static table capacity for tracking active bundles in custody.
+
+config MUON_BPA_MAX_RETRIES
+    int "Maximum convergence layer transmission retries"
+    default 3
+    range 1 10
+    help
+      Maximum transmission failures before dropping an unacknowledged bundle.
+
+config MUON_BPA_LOCAL_NODE_ID
+    int "Default local node number (IPN schema)"
+    default 1
+    help
+      Default local node number used in IPN endpoint identifiers (e.g. ipn:1.1).
+
+config MUON_BPA_LOCAL_SERVICE_ID
+    int "Default local service number (IPN schema)"
+    default 1
+    help
+      Default local service number used in IPN endpoint identifiers.
+
+endif # MUON_BPA
