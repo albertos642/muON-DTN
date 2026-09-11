@@ -1,0 +1,53 @@
+# @file Kconfig
+# @brief Configuration menu for muON RTC DS3231 Real-Time Clock Plugin.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_PLUGIN_RTC_DS3231
+    bool "DS3231 Real-Time Clock (RTC) Plugin"
+    default y
+    help
+      Maintains high-precision DTN real-time clock using DS3231 TCXO RTC.
+      Implements muon::bpa::ITimeProvider and synchronizes from UARTCL or bundles.
+
+if MUON_PLUGIN_RTC_DS3231
+
+    config MUON_RTC_DS3231_I2C_ADDRESS
+        hex "DS3231 I2C Address"
+        default 0x68
+        help
+          Standard I2C address for DS3231 (always 0x68).
+
+    if !MUON_I2C_SHARED_BUS
+        config MUON_RTC_PIN_SDA
+            int "Dedicated RTC SDA Pin"
+            default 20
+
+        config MUON_RTC_PIN_SCL
+            int "Dedicated RTC SCL Pin"
+            default 21
+    endif
+
+    config MUON_RTC_AUTO_SYNC_UARTCL
+        bool "Synchronize Time from UARTCL Timesync Frames"
+        default y
+        help
+          Automatically adjusts RTC time when authoritative timesync frames (UARTCL_FLAG_SYNC) arrive.
+
+    config MUON_RTC_AUTO_SYNC_BUNDLE
+        bool "Synchronize Time from Ingress Bundle Timestamps"
+        default y
+        help
+          If RTC is uncalibrated, adopts incoming bundle creation timestamps as lower bound.
+
+    config MUON_RTC_CACHE_SECONDS
+        int "RTC Read Caching Interval (seconds)"
+        default 1
+        range 1 60
+        help
+          Number of seconds to interpolate via millis() between hardware I2C reads
+          to minimize I2C bus traffic and FreeRTOS task latency.
+
+endif

@@ -41,6 +41,9 @@ constexpr ggg::system::EventId_t MUON_EVT_BUNDLE_DELIVERED = 0x1005;
 // Bundle lifetime expired and was purged from storage. payload.u32[0] = StorageHandle_t
 constexpr ggg::system::EventId_t MUON_EVT_BUNDLE_EXPIRED   = 0x1006;
 
+// Convergence Layer received authoritative Time Sync frame. payload.u32[0] = dtnTimestamp
+constexpr ggg::system::EventId_t MUON_EVT_TIME_SYNC        = 0x1007;
+
 } // namespace events
 } // namespace muon
 

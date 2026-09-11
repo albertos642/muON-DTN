@@ -58,6 +58,8 @@ public:
     size_t getMTU() const override { return 255; }
     void handleInterrupt() override;
     uint32_t getTimeOnAirMs(size_t packetLength) const override;
+    float getRSSI() const override { return _radio.getRSSI(); }
+    float getSNR() const override { return _radio.getSNR(); }
 };
 
 } // namespace lora

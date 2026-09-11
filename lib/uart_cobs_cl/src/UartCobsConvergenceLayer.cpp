@@ -83,12 +83,22 @@ void UartCobsConvergenceLayer::feedWireByte(uint8_t wireByte) {
             if (_syncBufferLen == 6) {
                 uint16_t computedCrc = Crc16Ccitt::update(_runningRxCrc, _syncBuffer, 4);
                 uint16_t receivedCrc = ((uint16_t)_syncBuffer[4] << 8) | _syncBuffer[5];
-                if (computedCrc == receivedCrc && _timeSyncCallback != nullptr) {
+                if (computedCrc == receivedCrc) {
                     uint32_t dtnTime = ((uint32_t)_syncBuffer[0] << 24) |
                                        ((uint32_t)_syncBuffer[1] << 16) |
                                        ((uint32_t)_syncBuffer[2] << 8) |
                                        (uint32_t)_syncBuffer[3];
-                    _timeSyncCallback(dtnTime);
+                    if (_timeSyncCallback != nullptr) {
+                        _timeSyncCallback(dtnTime);
+                    }
+
+                    // Emit MUON_EVT_TIME_SYNC on SystemBus for RTC and time providers
+                    ggg::system::SystemEvent ev = {};
+                    ev.type = muon::events::MUON_EVT_TIME_SYNC;
+                    ev.source = _linkId;
+                    ev.priority = 200;
+                    ev.payload.u32[0] = dtnTime;
+                    ggg::system::SystemBus::getInstance().publish(ev);
                 }
             }
             resetRxState();

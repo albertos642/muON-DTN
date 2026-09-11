@@ -1,0 +1,102 @@
+# @file Kconfig
+# @brief Configuration menu for muON OLED Display Plugin (SSD1306/SSD1315).
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_PLUGIN_OLED_DISPLAY
+    bool "OLED Display Plugin (SSD1306 / SSD1315 via I2C)"
+    default y
+    help
+      Enables status dashboard and DTN message viewer on I2C OLED display.
+
+if MUON_PLUGIN_OLED_DISPLAY
+
+    choice
+        prompt "OLED Display Controller"
+        default MUON_OLED_CONTROLLER_SSD1306
+        help
+          Select the OLED driver controller chip.
+
+    config MUON_OLED_CONTROLLER_SSD1306
+        bool "Solomon Systech SSD1306"
+
+    config MUON_OLED_CONTROLLER_SSD1315
+        bool "Solomon Systech SSD1315"
+    endchoice
+
+    choice
+        prompt "Screen Resolution"
+        default MUON_OLED_RES_128X64
+        help
+          Physical pixel dimensions of the display panel.
+
+    config MUON_OLED_RES_128X64
+        bool "128 x 64 Pixels"
+
+    config MUON_OLED_RES_128X32
+        bool "128 x 32 Pixels"
+    endchoice
+
+    choice
+        prompt "U8g2 Paging / Buffer Strategy"
+        default MUON_OLED_BUFFER_PAGE
+        help
+          Select memory footprint strategy:
+          Page buffer requires only 128 bytes of RAM (ideal for SAMD21).
+          Full buffer requires 1024 bytes of RAM.
+
+    config MUON_OLED_BUFFER_PAGE
+        bool "Page Buffer (128 Bytes RAM - Low Memory)"
+
+    config MUON_OLED_BUFFER_FULL
+        bool "Full Framebuffer (1024 Bytes RAM - Fast Refresh)"
+    endchoice
+
+    config MUON_OLED_I2C_ADDRESS
+        hex "OLED I2C Address"
+        default 0x3C
+        help
+          I2C address of OLED display (usually 0x3C or 0x3D).
+
+    config MUON_OLED_HAS_RESET_PIN
+        bool "Display Module Has Hardware Reset Pin"
+        default n
+        help
+          Enable if your OLED breakout board exposes an active-low RST pin.
+          If disabled, U8X8_PIN_NONE is used.
+
+    config MUON_OLED_PIN_RESET
+        int "Reset (RST) Pin Number"
+        default -1
+        depends on MUON_OLED_HAS_RESET_PIN
+        help
+          GPIO pin connected to display /RES line.
+
+    if !MUON_I2C_SHARED_BUS
+        config MUON_OLED_PIN_SDA
+            int "Dedicated OLED SDA Pin"
+            default 20
+
+        config MUON_OLED_PIN_SCL
+            int "Dedicated OLED SCL Pin"
+            default 21
+    endif
+
+    config MUON_OLED_APP_SERVICE_ID
+        int "BPA Application Service ID for Display"
+        default 10
+        range 1 255
+        help
+          Destination service number (ipn:<node>.<service>) delivered to this display.
+          Incoming bundles destined to this service ID are parsed and printed on screen.
+
+    config MUON_OLED_REFRESH_RATE_HZ
+        int "Display Refresh Rate (Hz)"
+        default 2
+        range 1 10
+        help
+          Maximum screen redraw frequency to prevent FreeRTOS task starvation.
+
+endif

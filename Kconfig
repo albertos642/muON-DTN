@@ -69,6 +69,52 @@ menu "muON Storage Backend Configuration"
     endchoice
 endmenu
 
+menu "I2C Hardware Bus Configuration"
+    config MUON_I2C_SHARED_BUS
+        bool "Enable Shared I2C Bus for Peripherals"
+        default y
+        help
+          Enables a shared hardware I2C bus (Wire) for connected peripherals
+          (OLED display, BME280 sensor, DS3231 RTC).
+          When enabled, all I2C plugins share the common SDA/SCL lines.
+
+    if MUON_I2C_SHARED_BUS
+        choice
+            prompt "I2C Interface Mode"
+            default MUON_I2C_USE_HARDWARE_WIRE
+            help
+              Use standard MCU hardware Wire peripheral or custom pins.
+
+            config MUON_I2C_USE_HARDWARE_WIRE
+                bool "Standard Hardware Wire Peripheral"
+
+            config MUON_I2C_USE_CUSTOM_PINS
+                bool "Custom SDA/SCL GPIO Pins"
+        endchoice
+
+        if MUON_I2C_USE_CUSTOM_PINS
+            config MUON_I2C_PIN_SDA
+                int "Shared I2C SDA Pin"
+                default 20
+
+            config MUON_I2C_PIN_SCL
+                int "Shared I2C SCL Pin"
+                default 21
+        endif
+
+        config MUON_I2C_CLOCK_SPEED
+            int "I2C Bus Clock Frequency (Hz)"
+            default 400000
+            range 100000 1000000
+            help
+              Bus speed in Hz (100000 = Standard 100kHz, 400000 = Fast Mode 400kHz).
+    endif
+endmenu
+
+menu "muON Application Plugins"
+    orsource "plugins/*/Kconfig"
+endmenu
+
 # Include underlying GGG Core Framework configuration
 orsource "../ggg/Kconfig"
 

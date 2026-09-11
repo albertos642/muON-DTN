@@ -80,6 +80,16 @@ public:
      * @brief Calculates or queries Time on Air (ToA) in milliseconds for a given packet length.
      */
     virtual uint32_t getTimeOnAirMs(size_t packetLength) const = 0;
+
+    /**
+     * @brief Returns the RSSI of the last received packet in dBm.
+     */
+    virtual float getRSSI() const { return 0.0f; }
+
+    /**
+     * @brief Returns the SNR of the last received packet in dB.
+     */
+    virtual float getSNR() const { return 0.0f; }
 };
 
 } // namespace lora

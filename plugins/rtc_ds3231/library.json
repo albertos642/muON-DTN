@@ -1,0 +1,14 @@
+{
+  "name": "muon_plugin_rtc_ds3231",
+  "version": "0.1.0",
+  "description": "DS3231 Real-Time Clock TimeProvider Plugin for muON-DTN",
+  "keywords": ["dtn", "rtc", "ds3231", "clock", "timesync"],
+  "authors": [
+    {
+      "name": "Alberto Soncini",
+      "email": "alberto.soncini3@studio.unibo.it"
+    }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["atmelsam", "native"]
+}

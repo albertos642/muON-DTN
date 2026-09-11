@@ -1,0 +1,14 @@
+{
+  "name": "muon_plugin_oled_display",
+  "version": "0.1.0",
+  "description": "OLED Status Dashboard and DTN Message Viewer Plugin for muON",
+  "keywords": ["dtn", "oled", "ssd1306", "ssd1315", "u8g2"],
+  "authors": [
+    {
+      "name": "Alberto Soncini",
+      "email": "alberto.soncini3@studio.unibo.it"
+    }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["atmelsam", "native"]
+}

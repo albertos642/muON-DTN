@@ -1,0 +1,14 @@
+{
+  "name": "muon_plugin_sensor_bme280",
+  "version": "0.1.0",
+  "description": "BME280 Environmental Sensor and DTN Bundle Producer Plugin for muON",
+  "keywords": ["dtn", "bme280", "sensor", "telemetry"],
+  "authors": [
+    {
+      "name": "Alberto Soncini",
+      "email": "alberto.soncini3@studio.unibo.it"
+    }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["atmelsam", "native"]
+}

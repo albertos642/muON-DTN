@@ -30,6 +30,22 @@
 #include <muon/lora/RadioLibLoRaModem.h>
 #include <muon/uartcobs/UartCobsConvergenceLayer.h>
 
+#if defined(CONFIG_MUON_PLUGIN_RTC_DS3231)
+#include <muon/plugins/RtcDs3231Plugin.h>
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+#include <muon/plugins/OledDisplayPlugin.h>
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_SENSOR_BME280)
+#include <muon/plugins/Bme280Plugin.h>
+#endif
+
+#if defined(CONFIG_MUON_I2C_SHARED_BUS) && defined(ARDUINO) && !defined(TARGET_NATIVE)
+#include <Wire.h>
+#endif
+
 #include "autoconf.h"
 
 // ----------------------------------------------------------------------------
@@ -78,16 +94,64 @@ static ggg::hal::RamStorage g_storage;
 #endif
 static muon::routing::StaticRoutingEngine g_router;
 
+#if defined(CONFIG_MUON_PLUGIN_RTC_DS3231)
+#if defined(ARDUINO) && !defined(TARGET_NATIVE) && !defined(GGG_TARGET_NATIVE)
+static muon::plugins::I2cRtcHardwareHal g_rtcHal;
+#else
+static muon::plugins::MockRtcHardwareHal g_rtcHal;
+#endif
+static muon::plugins::RtcDs3231Plugin g_rtcPlugin(&g_rtcHal);
+static muon::bpa::ITimeProvider* g_timeProvider = &g_rtcPlugin;
+#else
 class ArduinoTimeProvider : public muon::bpa::ITimeProvider {
 public:
     uint32_t getDtnTimestamp() const override {
         return (uint32_t)(millis() / 1000);
     }
 };
+static ArduinoTimeProvider g_defaultTimeProvider;
+static muon::bpa::ITimeProvider* g_timeProvider = &g_defaultTimeProvider;
+#endif
 
-static ArduinoTimeProvider g_timeProvider;
-static muon::bpa::BundleAgent g_bundleAgent(&g_storage, &g_timeProvider, &g_router);
+static muon::bpa::BundleAgent g_bundleAgent(&g_storage, g_timeProvider, &g_router);
 static muon::clm::ConvergenceLayerManager g_clm(&g_router, &g_storage);
+
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+#if defined(ARDUINO) && !defined(TARGET_NATIVE) && !defined(GGG_TARGET_NATIVE)
+#if defined(CONFIG_MUON_OLED_HAS_RESET_PIN) && (CONFIG_MUON_OLED_PIN_RESET >= 0)
+static muon::plugins::U8g2OledRenderer g_oledRenderer(CONFIG_MUON_OLED_I2C_ADDRESS, CONFIG_MUON_OLED_PIN_RESET);
+#else
+static muon::plugins::U8g2OledRenderer g_oledRenderer(CONFIG_MUON_OLED_I2C_ADDRESS, -1);
+#endif
+#else
+static muon::plugins::MockOledRenderer g_oledRenderer;
+#endif
+static muon::plugins::OledDisplayPlugin g_oledPlugin(
+    &g_oledRenderer, 
+    &g_storage, 
+    CONFIG_MUON_OLED_APP_SERVICE_ID, 
+    CONFIG_MUON_OLED_REFRESH_RATE_HZ
+);
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_SENSOR_BME280)
+#if defined(ARDUINO) && !defined(TARGET_NATIVE) && !defined(GGG_TARGET_NATIVE)
+static muon::plugins::AdafruitBme280Driver g_bmeDriver;
+#else
+static muon::plugins::MockBme280Driver g_bmeDriver;
+#endif
+static muon::plugins::Bme280Plugin g_bmePlugin(
+    &g_bmeDriver,
+    &g_bundleAgent,
+    CONFIG_MUON_BME280_I2C_ADDRESS,
+    CONFIG_MUON_BME280_TRIGGER_EVENT_ID,
+    CONFIG_MUON_BME280_TRIGGER_CODE,
+    CONFIG_MUON_BME280_DEST_NODE,
+    CONFIG_MUON_BME280_DEST_SERVICE,
+    CONFIG_MUON_BME280_BUNDLE_PRIORITY,
+    CONFIG_MUON_BME280_BUNDLE_LIFETIME_SEC
+);
+#endif
 
 // Stream adapter for Serial1 (Hardware UART) or Serial (USB CDC)
 static ArduinoStreamLink g_uartStream(Serial);
@@ -161,6 +225,10 @@ public:
 
             delay(50);
             digitalWrite(LED_BUILTIN, LOW);
+
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+            g_oledPlugin.updateRfTelemetry((int16_t)g_loraModem.getRSSI(), (int8_t)g_loraModem.getSNR());
+#endif
         } else if (event.type == muon::events::MUON_EVT_TX_SUCCESS) {
             Serial.println(F("[muON] TX Success"));
         } else if (event.type == muon::events::MUON_EVT_TX_FAILURE) {
@@ -186,6 +254,9 @@ static void ClmTickTask(void *pvParameters) {
 
     while (true) {
         g_clm.tickAll();
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+        g_oledPlugin.tick(millis());
+#endif
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
@@ -248,6 +319,40 @@ void setup() {
     ggg::system::SystemBus::getInstance().init();
     ggg::system::SystemBus::getInstance().subscribe(&g_appListener);
     g_storage.begin();
+
+#if defined(CONFIG_MUON_I2C_SHARED_BUS) && defined(ARDUINO) && !defined(TARGET_NATIVE)
+    Wire.begin();
+#if defined(CONFIG_MUON_I2C_CLOCK_SPEED)
+    Wire.setClock(CONFIG_MUON_I2C_CLOCK_SPEED);
+#endif
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_RTC_DS3231)
+    if (g_rtcPlugin.begin()) {
+        Serial.println(F("[RTC] DS3231 initialized successfully."));
+    } else {
+        Serial.println(F("[RTC] WARNING: DS3231 not detected on I2C bus."));
+    }
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+#if defined(CONFIG_MUON_NODE_ROLE_A)
+    g_oledPlugin.setRoleString("Node A (1.1)");
+#else
+    g_oledPlugin.setRoleString("Node B (2.1)");
+#endif
+    if (g_oledPlugin.begin()) {
+        Serial.println(F("[OLED] Display initialized successfully."));
+    }
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_SENSOR_BME280)
+    if (g_bmePlugin.begin()) {
+        Serial.println(F("[BME280] Sensor initialized in forced mode."));
+    } else {
+        Serial.println(F("[BME280] WARNING: BME280 not detected on I2C bus."));
+    }
+#endif
 
     // 2. Initialise Network Routing
     g_router.setLocalEndpoint(muon::bpa::IpnEndpointId{CONFIG_MUON_LOCAL_NODE_ID, 1});

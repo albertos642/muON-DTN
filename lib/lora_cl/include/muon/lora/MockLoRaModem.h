@@ -171,6 +171,9 @@ public:
         }
         return LoRaDutyCycleTokenBucket::calculateAnalyticalToAMs(_config, packetLength);
     }
+
+    float getRSSI() const override { return -85.0f; }
+    float getSNR() const override { return 8.0f; }
 };
 
 } // namespace lora

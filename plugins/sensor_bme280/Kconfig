@@ -1,0 +1,71 @@
+# @file Kconfig
+# @brief Configuration menu for muON BME280 Environmental Sensor Plugin.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_PLUGIN_SENSOR_BME280
+    bool "BME280 Environmental Sensor Plugin"
+    default y
+    help
+      Samples Temperature, Humidity and Pressure via I2C in forced mode
+      and generates DTN bundles upon SystemBus trigger events.
+
+if MUON_PLUGIN_SENSOR_BME280
+
+    config MUON_BME280_I2C_ADDRESS
+        hex "BME280 I2C Address"
+        default 0x76
+        help
+          I2C address: 0x76 (SDO to GND) or 0x77 (SDO to VCC).
+
+    if !MUON_I2C_SHARED_BUS
+        config MUON_BME280_PIN_SDA
+            int "Dedicated BME280 SDA Pin"
+            default 20
+
+        config MUON_BME280_PIN_SCL
+            int "Dedicated BME280 SCL Pin"
+            default 21
+    endif
+
+    config MUON_BME280_TRIGGER_EVENT_ID
+        hex "Trigger Event ID to React To"
+        default 0x0100
+        help
+          SystemBus Event ID that initiates sensor sampling (0x0100 = GGG_EVT_APP_TRIGGER).
+
+    config MUON_BME280_TRIGGER_CODE
+        int "Trigger Payload Signal Code"
+        default 1
+        help
+          Value expected in event.payload.u32[0] to execute sampling.
+          Allows filtering specific button press or timer codes.
+
+    config MUON_BME280_DEST_NODE
+        int "Destination DTN Node Number (IPN)"
+        default 2
+        help
+          Target node number for the generated telemetry bundle (e.g. ipn:2.1).
+
+    config MUON_BME280_DEST_SERVICE
+        int "Destination DTN Service Number (IPN)"
+        default 1
+        help
+          Target service number on the destination node.
+
+    config MUON_BME280_BUNDLE_PRIORITY
+        int "Bundle Transmission Priority"
+        default 1
+        range 0 2
+        help
+          0 = Bulk, 1 = Normal, 2 = Expedited.
+
+    config MUON_BME280_BUNDLE_LIFETIME_SEC
+        int "Bundle Lifetime (seconds)"
+        default 3600
+        help
+          Custody expiration time in seconds (default: 1 hour).
+
+endif
