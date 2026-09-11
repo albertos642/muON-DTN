@@ -47,6 +47,29 @@ menu "muON Network Layer"
     orsource "lib/uart_cobs_cl/Kconfig"
 endmenu
 
+menu "muON Storage Backend Configuration"
+    choice
+        prompt "muON IStorage Backend"
+        default MUON_STORAGE_BACKEND_RAM
+        help
+          Selects the active IStorage implementation for bundle persistence.
+          If SPI Flash is selected, RAM storage is completely disabled to save memory.
+
+    config MUON_STORAGE_BACKEND_RAM
+        bool "Internal RAM Storage (ggg::hal::RamStorage)"
+        help
+          Fast in-memory volatile block storage.
+
+    config MUON_STORAGE_BACKEND_SPI_FLASH
+        bool "External SPI NOR Flash Storage (ggg::plugins::SpiFlashStorage)"
+        depends on GGG_PLUGIN_SPI_FLASH_STORAGE
+        help
+          Non-volatile SPI Flash storage (e.g. Winbond W25Q64).
+          Only selectable when GGG SPI Flash Storage plugin is enabled.
+    endchoice
+endmenu
+
 # Include underlying GGG Core Framework configuration
 orsource "../ggg/Kconfig"
+
 

@@ -12,7 +12,11 @@
 #include <task.h>
 
 #include <ggg/system/SystemBus.h>
+#if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
+#include <ggg/plugins/SpiFlashStorage.h>
+#else
 #include <ggg/hal/RamStorage.h>
+#endif
 #include <ggg/hal/IStream.h>
 
 #include <muon/bpa/MuonEvents.h>
@@ -67,7 +71,11 @@ public:
 // ----------------------------------------------------------------------------
 // 2. Static Memory Infrastructure (Zero-Malloc)
 // ----------------------------------------------------------------------------
+#if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
+static ggg::plugins::SpiFlashStorage g_storage;
+#else
 static ggg::hal::RamStorage g_storage;
+#endif
 static muon::routing::StaticRoutingEngine g_router;
 
 class ArduinoTimeProvider : public muon::bpa::ITimeProvider {
@@ -236,9 +244,10 @@ void setup() {
     Serial.println(F(" muON-DTN: Micro Interplanetary Overlay   "));
     Serial.println(F("=========================================="));
 
-    // 1. Initialise SystemBus
+    // 1. Initialise SystemBus and Storage
     ggg::system::SystemBus::getInstance().init();
     ggg::system::SystemBus::getInstance().subscribe(&g_appListener);
+    g_storage.begin();
 
     // 2. Initialise Network Routing
     g_router.setLocalEndpoint(muon::bpa::IpnEndpointId{CONFIG_MUON_LOCAL_NODE_ID, 1});

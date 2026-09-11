@@ -45,18 +45,22 @@ if MUON_LORA_CL_ENABLED
     config MUON_LORA_PIN_CS
         int "SPI Chip Select (NSS) Pin"
         default 8
+        depends on !MUON_LORA_MODEM_MOCK
 
     config MUON_LORA_PIN_DIO0
         int "DIO0 (IRQ) Pin"
         default 3
+        depends on !MUON_LORA_MODEM_SX1262 && !MUON_LORA_MODEM_MOCK
 
     config MUON_LORA_PIN_RESET
         int "Reset (RST) Pin"
         default 4
+        depends on !MUON_LORA_MODEM_MOCK
 
     config MUON_LORA_PIN_DIO1
         int "DIO1 Pin (SX1262 only)"
         default 6
+        depends on MUON_LORA_MODEM_SX1262
 
     config MUON_LORA_FREQ_MHZ
         int "Carrier Frequency (MHz)"
