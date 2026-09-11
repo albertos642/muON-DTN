@@ -300,11 +300,16 @@ bool CBORSerializer::decodeCreationTimestamp(ggg::hal::IInputStream& stream, uin
     return true;
 }
 
-bool CBORSerializer::skipCborItem(ggg::hal::IInputStream& stream) {
+bool CBORSerializer::skipCborItem(ggg::hal::IInputStream& stream, int initialByte) {
     uint8_t major = 0;
     uint8_t add = 0;
-    if (!decodeInitialByte(stream, major, add)) {
-        return false;
+    if (initialByte >= 0) {
+        major = static_cast<uint8_t>((initialByte >> 5) & 0x07);
+        add = static_cast<uint8_t>(initialByte & 0x1F);
+    } else {
+        if (!decodeInitialByte(stream, major, add)) {
+            return false;
+        }
     }
 
     // Special break code (0xFF)
@@ -383,12 +388,7 @@ bool CBORSerializer::skipCborItem(ggg::hal::IInputStream& stream) {
                     int p = stream.read();
                     if (p < 0) return false;
                     if (p == 0xFF) break;
-                    // Push back or handle by skipping:
-                    // Since IInputStream doesn't guarantee unget, we read subsequent items:
-                    // For standard indefinite array, each element is a CBOR item
-                    // If p != 0xFF, we already read 1 byte; in our stream skip,
-                    // we can avoid indefinite arrays or parse normally.
-                    return false; // Indefinite arrays not used in BPv7 core
+                    if (!skipCborItem(stream, p)) return false;
                 }
                 return true;
             } else {
@@ -399,10 +399,21 @@ bool CBORSerializer::skipCborItem(ggg::hal::IInputStream& stream) {
             }
 
         case 5: // map
-            for (uint64_t i = 0; i < value * 2; ++i) {
-                if (!skipCborItem(stream)) return false;
+            if (add == 31) {
+                while (true) {
+                    int p = stream.read();
+                    if (p < 0) return false;
+                    if (p == 0xFF) break;
+                    if (!skipCborItem(stream, p)) return false; // key
+                    if (!skipCborItem(stream)) return false;    // value
+                }
+                return true;
+            } else {
+                for (uint64_t i = 0; i < value * 2; ++i) {
+                    if (!skipCborItem(stream)) return false;
+                }
+                return true;
             }
-            return true;
 
         case 6: // semantic tag
             return skipCborItem(stream);
@@ -547,8 +558,11 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
                                             size_t& outPayloadLength)
 {
     size_t totalBlocks = 0;
-    bool indef = false;
-    if (!decodeArrayHeader(stream, totalBlocks, indef) || totalBlocks < 2) {
+    bool bundleIndefinite = false;
+    if (!decodeArrayHeader(stream, totalBlocks, bundleIndefinite)) {
+        return false;
+    }
+    if (!bundleIndefinite && totalBlocks < 2) {
         return false;
     }
 
@@ -556,7 +570,8 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
     // Parse Primary Block
     // ------------------------------------------------------------------------
     size_t primaryElemCount = 0;
-    if (!decodeArrayHeader(stream, primaryElemCount, indef) || primaryElemCount < 8) {
+    bool primaryIndef = false;
+    if (!decodeArrayHeader(stream, primaryElemCount, primaryIndef) || primaryElemCount < 8) {
         return false;
     }
 
@@ -606,9 +621,39 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
     // ------------------------------------------------------------------------
     // Locate and Parse Payload Block (Block Type 1)
     // ------------------------------------------------------------------------
-    for (size_t b = 1; b < totalBlocks; ++b) {
+    size_t b = 1;
+    while (bundleIndefinite || b < totalBlocks) {
+        int nextByte = stream.read();
+        if (nextByte < 0) return false;
+
+        // If outer bundle array is indefinite (0x9F), 0xFF denotes the Break stop code
+        if (bundleIndefinite && nextByte == 0xFF) {
+            break;
+        }
+
+        // Decode the block array header starting with nextByte
+        uint8_t majorType = static_cast<uint8_t>((nextByte >> 5) & 0x07);
+        uint8_t addInfo = static_cast<uint8_t>(nextByte & 0x1F);
+        if (majorType != 4) {
+            return false;
+        }
+
         size_t blockElems = 0;
-        if (!decodeArrayHeader(stream, blockElems, indef) || blockElems < 5) {
+        if (addInfo < 24) {
+            blockElems = addInfo;
+        } else if (addInfo == 24) {
+            int bVal = stream.read();
+            if (bVal < 0) return false;
+            blockElems = static_cast<uint8_t>(bVal);
+        } else if (addInfo == 25) {
+            uint8_t buf[2];
+            if (!readExactBytes(stream, buf, 2)) return false;
+            blockElems = (static_cast<size_t>(buf[0]) << 8) | buf[1];
+        } else {
+            return false;
+        }
+
+        if (blockElems < 5) {
             return false;
         }
 
@@ -631,7 +676,8 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
             }
 
             // Payload ByteString Header
-            if (!decodeByteStringHeader(stream, outPayloadLength, indef)) return false;
+            bool payloadIndef = false;
+            if (!decodeByteStringHeader(stream, outPayloadLength, payloadIndef)) return false;
 
             // Successfully positioned at the exact boundary of the payload bytes!
             return true;
@@ -641,6 +687,7 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
                 if (!skipCborItem(stream)) return false;
             }
         }
+        b++;
     }
 
     return false; // No payload block discovered

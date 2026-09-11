@@ -1,0 +1,19 @@
+# node_gateway.bprc
+# BPv7 Configuration for IONe Gateway Node 3
+1
+a scheme ipn 'ipnfw' 'ipnadminep'
+
+# Local endpoints hosted on Node 3
+a endpoint ipn:3.0 q
+a endpoint ipn:3.1 q
+a endpoint ipn:3.2 q
+
+# Declare UARTCL-COBS protocol: nominal MTU 1400, frame overhead 100
+a protocol uartcobs 1400 100
+
+# Induct and Outduct pointing to the microcontroller serial device
+# Note: change /dev/ttyUSB0 to /dev/ttyACM0 or equivalent port as needed
+a induct uartcobs /dev/ttyUSB0:115200 'uartcobscli /dev/ttyUSB0:115200'
+a outduct uartcobs /dev/ttyUSB0:115200 'uartcobsclo /dev/ttyUSB0:115200'
+
+s

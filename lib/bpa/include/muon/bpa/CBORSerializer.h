@@ -80,7 +80,7 @@ public:
     static bool decodeCreationTimestamp(ggg::hal::IInputStream& stream, uint64_t& outTimestamp, uint64_t& outSeqNo);
 
     // Consumes and discards a single complete CBOR data item from stream (Zero-Malloc)
-    static bool skipCborItem(ggg::hal::IInputStream& stream);
+    static bool skipCborItem(ggg::hal::IInputStream& stream, int initialByte = -1);
 
     // ========================================================================
     // BPv7 High-Level Bundle Operations (RFC 9171)

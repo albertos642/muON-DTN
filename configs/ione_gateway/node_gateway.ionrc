@@ -1,0 +1,17 @@
+# node_gateway.ionrc
+# Initialization of IONe node 3
+1 3 node_gateway.ionconfig
+s
+
+# Contact plan for Node 3 (IONe Gateway PC) and Node 1 (muON MCU)
+# UART-COBS at 115200 baud provides ~11520 bytes/sec nominal throughput
+a contact +0 +86400 3 3 100000
+a range   +0 +86400 3 3 0
+
+a contact +0 +86400 3 1 11520
+a contact +0 +86400 1 3 11520
+a range   +0 +86400 3 1 0
+a range   +0 +86400 1 3 0
+
+m production 1000000
+m consumption 1000000
