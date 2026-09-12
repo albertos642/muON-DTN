@@ -305,12 +305,18 @@ void LoRaConvergenceLayer::onTxDone() {
 }
 
 void LoRaConvergenceLayer::onRxDone(size_t length) {
-    if (length == 0 || _modem == nullptr) {
+    if (_modem == nullptr) {
+        return;
+    }
+
+    if (length == 0) {
+        _modem->startReceive();
         return;
     }
 
     size_t rLen = _modem->receive(_rxBuffer, length > sizeof(_rxBuffer) ? sizeof(_rxBuffer) : length);
     if (rLen < 1) {
+        _modem->startReceive();
         return;
     }
 

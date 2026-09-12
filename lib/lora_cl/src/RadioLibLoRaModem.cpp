@@ -13,6 +13,11 @@
 #include "muon/lora/LoRaDutyCycleTokenBucket.h"
 #include "muon/common/Logger.h"
 
+extern "C" {
+__attribute__((weak)) void muonSpiLock() {}
+__attribute__((weak)) void muonSpiUnlock() {}
+}
+
 namespace muon {
 namespace lora {
 
@@ -29,6 +34,7 @@ bool RadioLibLoRaModem::begin(const LoRaConfig& config, IModemCallback* callback
     _callback = callback;
     _lastConfig = config;
 
+    muonSpiLock();
     int state = _radio.begin(
         config.frequencyMHz,
         config.bandwidthKHz,
@@ -41,10 +47,12 @@ bool RadioLibLoRaModem::begin(const LoRaConfig& config, IModemCallback* callback
     );
 
     if (state != RADIOLIB_ERR_NONE) {
+        muonSpiUnlock();
         return false;
     }
 
     _radio.setCrcFiltering(true);
+    muonSpiUnlock();
     return true;
 }
 
@@ -61,6 +69,7 @@ bool RadioLibLoRaModem::transmitAsync(const uint8_t* buffer, size_t length) {
     MUON_LOG_U32(_lastConfig.spreadingFactor);
     MUON_LOG_LN("");
 
+    muonSpiLock();
     _radio.standby();
     _radio.finishTransmit();
 
@@ -71,26 +80,34 @@ bool RadioLibLoRaModem::transmitAsync(const uint8_t* buffer, size_t length) {
         MUON_LOG_I32(state);
         MUON_LOG_LN("");
         _currentAction = Action::IDLE;
+        muonSpiUnlock();
         return false;
     }
+    muonSpiUnlock();
 
     return true;
 }
 
 void RadioLibLoRaModem::startReceive() {
+    muonSpiLock();
     _currentAction = Action::RX_IN_PROGRESS;
     _radio.startReceive();
+    muonSpiUnlock();
 }
 
 void RadioLibLoRaModem::forceStandby() {
+    muonSpiLock();
     _currentAction = Action::IDLE;
     _radio.standby();
     _radio.finishTransmit();
+    muonSpiUnlock();
 }
 
 size_t RadioLibLoRaModem::receive(uint8_t* buffer, size_t maxLength) {
+    muonSpiLock();
     size_t length = _radio.getPacketLength();
     if (length == 0 || length > maxLength) {
+        muonSpiUnlock();
         return 0;
     }
 
@@ -99,6 +116,7 @@ size_t RadioLibLoRaModem::receive(uint8_t* buffer, size_t maxLength) {
     _cachedSnr = _radio.getSNR();
 
     int state = _radio.readData(buffer, length);
+    muonSpiUnlock();
     if (state == RADIOLIB_ERR_NONE) {
         return length;
     }
@@ -111,17 +129,30 @@ void RadioLibLoRaModem::handleInterrupt() {
     }
 
     if (_currentAction == Action::TX_IN_PROGRESS) {
+        muonSpiLock();
         _currentAction = Action::IDLE;
         _radio.finishTransmit();
+        muonSpiUnlock();
         MUON_LOG_LN("[Radio] SX1276 DIO0 IRQ: TxDone (finishTransmit completed)");
         _callback->onTxDone();
-    } else if (_currentAction == Action::RX_IN_PROGRESS) {
-        _currentAction = Action::IDLE;
+    } else {
+        muonSpiLock();
         size_t len = _radio.getPacketLength();
-        MUON_LOG_STR("[Radio] SX1276 DIO0 IRQ: RxDone, packet len=");
-        MUON_LOG_U32(len);
-        MUON_LOG_LN(" B");
-        _callback->onRxDone(len);
+        if (len > 0) {
+            _currentAction = Action::IDLE;
+            muonSpiUnlock();
+            MUON_LOG_STR("[Radio] SX1276 DIO0 IRQ: RxDone, packet len=");
+            MUON_LOG_U32(len);
+            MUON_LOG_LN(" B");
+            _callback->onRxDone(len);
+        } else {
+            // Spurious IRQ or 0-length packet: re-arm RX immediately so modem is never stranded in IDLE!
+            if (_currentAction != Action::TX_IN_PROGRESS) {
+                _currentAction = Action::RX_IN_PROGRESS;
+                _radio.startReceive();
+            }
+            muonSpiUnlock();
+        }
     }
 }
 

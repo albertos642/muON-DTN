@@ -257,9 +257,24 @@ public:
         if (status != nullptr) {
             strncpy(_data.statusStr, status, sizeof(_data.statusStr) - 1);
             _data.statusStr[sizeof(_data.statusStr) - 1] = '\0';
+            if (strncmp(status, "ERR", 3) == 0 || strncmp(status, "FAULT", 5) == 0) {
+                _hasHardwareError = true;
+            }
             _isDirty = true;
         }
     }
+
+    void setHardwareError(const char* status, const char* actionMsg = nullptr) {
+        setStatusString(status);
+        _hasHardwareError = true;
+        if (actionMsg != nullptr) {
+            strncpy(_data.lastActionStr, actionMsg, sizeof(_data.lastActionStr) - 1);
+            _data.lastActionStr[sizeof(_data.lastActionStr) - 1] = '\0';
+        }
+        _isDirty = true;
+    }
+
+    bool hasHardwareError() const { return _hasHardwareError; }
 
     /**
      * @brief Updates last recorded RF telemetry (RSSI / SNR).
@@ -287,6 +302,7 @@ private:
     uint32_t            _lastDrawTimeMs;
     bool                _isDirty;
     bool                _isInitialized;
+    bool                _hasHardwareError;
     OledDashboardData   _data;
 
     void updateStorageCount();

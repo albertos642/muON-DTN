@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <FreeRTOS.h>
 #include <task.h>
+#include <semphr.h>
 
 #include <ggg/system/SystemBus.h>
 #if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
@@ -275,6 +276,46 @@ static uint32_t getArduinoMillis() {
 }
 
 // ----------------------------------------------------------------------------
+// Zero-Malloc Static Mutex for Shared SPI Bus (SX1276 LoRa + W25Q SPI Flash)
+// ----------------------------------------------------------------------------
+#if defined(ARDUINO) && !defined(TARGET_NATIVE)
+static SemaphoreHandle_t g_spiMutex = nullptr;
+#if defined(configSUPPORT_STATIC_ALLOCATION) && (configSUPPORT_STATIC_ALLOCATION == 1)
+static StaticSemaphore_t g_spiMutexBuffer;
+#endif
+
+extern "C" {
+void muonSpiInit() {
+    if (g_spiMutex == nullptr) {
+#if defined(configSUPPORT_STATIC_ALLOCATION) && (configSUPPORT_STATIC_ALLOCATION == 1)
+        g_spiMutex = xSemaphoreCreateMutexStatic(&g_spiMutexBuffer);
+#else
+        g_spiMutex = xSemaphoreCreateMutex();
+#endif
+    }
+}
+
+void muonSpiLock() {
+    if (g_spiMutex != nullptr && xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        xSemaphoreTake(g_spiMutex, portMAX_DELAY);
+    }
+}
+
+void muonSpiUnlock() {
+    if (g_spiMutex != nullptr && xTaskGetSchedulerState() != taskSCHEDULER_NOT_STARTED) {
+        xSemaphoreGive(g_spiMutex);
+    }
+}
+}
+#else
+extern "C" {
+void muonSpiInit() {}
+void muonSpiLock() {}
+void muonSpiUnlock() {}
+}
+#endif
+
+// ----------------------------------------------------------------------------
 // 4. Application Listener: Displays DTN status and updates OLED telemetry
 // ----------------------------------------------------------------------------
 class AppEventListener : public ggg::system::IEventListener {
@@ -437,7 +478,8 @@ void setup() {
     MUON_LOGLN(F(" muON-DTN: microcontroller Overlay Network"));
     MUON_LOGLN(F("=========================================="));
 
-    // 1. Initialise SystemBus and Storage
+    // 1. Initialise SPI Mutex, SystemBus and Storage
+    muonSpiInit();
     ggg::system::SystemBus::getInstance().init();
     ggg::system::SystemBus::getInstance().subscribe(&g_appListener);
     if (g_storage.begin()) {
@@ -450,7 +492,7 @@ void setup() {
             MUON_LOGLN(F(""));
             if (jedec == 0x000000 || jedec == 0xFFFFFF) {
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-                g_oledPlugin.setStatusString("ERR: FLASH");
+                g_oledPlugin.setHardwareError("ERR: FLASH", "Bad JEDEC ID");
 #endif
             }
         }
@@ -458,7 +500,7 @@ void setup() {
     } else {
         MUON_LOGLN(F("[Storage] ERROR: Storage backend initialization failed!"));
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-        g_oledPlugin.setStatusString("ERR: STORAGE");
+        g_oledPlugin.setHardwareError("ERR: STORAGE", "Init Failed");
 #endif
     }
 
@@ -543,6 +585,9 @@ void setup() {
         MUON_LOGLN(F("[LoRa] SX1276 initialized successfully."));
     } else {
         MUON_LOGLN(F("[LoRa] ERROR: Failed to initialize SX1276 modem!"));
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+        g_oledPlugin.setHardwareError("ERR: LORA", "SX1276 Init Fail");
+#endif
     }
 
     // Attach DIO0 interrupt AFTER modem begin (modem begin calls pinMode which resets PMUXEN on SAMD21)

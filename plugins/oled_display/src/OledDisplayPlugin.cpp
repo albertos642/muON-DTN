@@ -25,7 +25,8 @@ OledDisplayPlugin::OledDisplayPlugin(IOledRenderer* renderer,
       _minRefreshIntervalMs((refreshRateHz > 0) ? (1000 / refreshRateHz) : 500),
       _lastDrawTimeMs(0),
       _isDirty(true),
-      _isInitialized(false)
+      _isInitialized(false),
+      _hasHardwareError(false)
 {
     memset(&_data, 0, sizeof(_data));
     snprintf(_data.roleStr, sizeof(_data.roleStr), "muON Node");
@@ -123,8 +124,10 @@ void OledDisplayPlugin::tick(uint32_t nowMs) {
 void OledDisplayPlugin::onEvent(const ggg::system::SystemEvent& event) {
     switch (event.type) {
         case ggg::system::GGG_EVT_STARTUP:
-            snprintf(_data.statusStr, sizeof(_data.statusStr), "IDLE");
-            snprintf(_data.lastActionStr, sizeof(_data.lastActionStr), "System Ready");
+            if (!_hasHardwareError) {
+                snprintf(_data.statusStr, sizeof(_data.statusStr), "IDLE");
+                snprintf(_data.lastActionStr, sizeof(_data.lastActionStr), "System Ready");
+            }
             updateStorageCount();
             _isDirty = true;
             break;
@@ -191,6 +194,7 @@ void OledDisplayPlugin::onEvent(const ggg::system::SystemEvent& event) {
         case ggg::system::GGG_EVT_HARDWARE_FAULT:
             snprintf(_data.statusStr, sizeof(_data.statusStr), "FAULT!");
             snprintf(_data.lastActionStr, sizeof(_data.lastActionStr), "HW Fault code:%u", (unsigned int)event.payload.u32[0]);
+            _hasHardwareError = true;
             _isDirty = true;
             break;
 
