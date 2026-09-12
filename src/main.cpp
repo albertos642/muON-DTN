@@ -15,6 +15,9 @@
 #include <ggg/system/SystemBus.h>
 #if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
 #include <ggg/plugins/SpiFlashStorage.h>
+#if defined(ARDUINO) && !defined(TARGET_NATIVE) && !defined(GGG_TARGET_NATIVE)
+#include <ggg/plugins/HardwareSpiFlashHal.h>
+#endif
 #else
 #include <ggg/hal/RamStorage.h>
 #endif
@@ -136,7 +139,12 @@ public:
 // 3. Static Memory Infrastructure (Zero-Malloc)
 // ----------------------------------------------------------------------------
 #if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
+#if defined(ARDUINO) && !defined(TARGET_NATIVE) && !defined(GGG_TARGET_NATIVE)
+static ggg::plugins::HardwareSpiFlashHal g_spiFlashHal(CONFIG_GGG_SPIFLASH_CS_PIN);
+static ggg::plugins::SpiFlashStorage g_storage(&g_spiFlashHal);
+#else
 static ggg::plugins::SpiFlashStorage g_storage;
+#endif
 #else
 static ggg::hal::RamStorage g_storage;
 #endif
@@ -478,6 +486,20 @@ void setup() {
     MUON_LOGLN(F(" muON-DTN: microcontroller Overlay Network"));
     MUON_LOGLN(F("=========================================="));
 
+    // 0. Pre-initialize and deselect all SPI slaves to prevent bus contention
+#if defined(CONFIG_MUON_LORA_PIN_CS)
+    pinMode(CONFIG_MUON_LORA_PIN_CS, OUTPUT);
+    digitalWrite(CONFIG_MUON_LORA_PIN_CS, HIGH);
+#endif
+#if defined(CONFIG_MUON_LORA_PIN_RESET)
+    pinMode(CONFIG_MUON_LORA_PIN_RESET, OUTPUT);
+    digitalWrite(CONFIG_MUON_LORA_PIN_RESET, HIGH);
+#endif
+#if defined(CONFIG_GGG_SPIFLASH_CS_PIN)
+    pinMode(CONFIG_GGG_SPIFLASH_CS_PIN, OUTPUT);
+    digitalWrite(CONFIG_GGG_SPIFLASH_CS_PIN, HIGH);
+#endif
+
     // 1. Initialise SPI Mutex, SystemBus and Storage
     muonSpiInit();
     ggg::system::SystemBus::getInstance().init();
@@ -492,7 +514,9 @@ void setup() {
             MUON_LOGLN(F(""));
             if (jedec == 0x000000 || jedec == 0xFFFFFF) {
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-                g_oledPlugin.setHardwareError("ERR: FLASH", "Bad JEDEC ID");
+                char errBuf[32];
+                snprintf(errBuf, sizeof(errBuf), "JEDEC: 0x%06lX", (unsigned long)jedec);
+                g_oledPlugin.setHardwareError("ERR: FLASH", errBuf);
 #endif
             }
         }
@@ -500,7 +524,14 @@ void setup() {
     } else {
         MUON_LOGLN(F("[Storage] ERROR: Storage backend initialization failed!"));
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-        g_oledPlugin.setHardwareError("ERR: STORAGE", "Init Failed");
+        char errBuf[32] = "Init Failed";
+#if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH)
+        if (g_storage.getHal() != nullptr) {
+            uint32_t jedec = g_storage.getHal()->readJedecId();
+            snprintf(errBuf, sizeof(errBuf), "ID: 0x%06lX", (unsigned long)jedec);
+        }
+#endif
+        g_oledPlugin.setHardwareError("ERR: STORAGE", errBuf);
 #endif
     }
 
