@@ -71,6 +71,7 @@ private:
     uint8_t _txQos;
     uint8_t _txSessionId;
     uint32_t _txAckStartTimeMs;
+    uint32_t _txSegmentStartTimeMs;
 
     // RX state machine
     RxState _rxState;

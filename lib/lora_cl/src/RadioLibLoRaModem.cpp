@@ -11,6 +11,7 @@
 
 #if defined(ARDUINO) || !defined(TARGET_NATIVE)
 #include "muon/lora/LoRaDutyCycleTokenBucket.h"
+#include "muon/common/Logger.h"
 
 namespace muon {
 namespace lora {
@@ -50,9 +51,20 @@ bool RadioLibLoRaModem::transmitAsync(const uint8_t* buffer, size_t length) {
         return false;
     }
 
+    MUON_LOG_STR("[Radio] SX1276 startTransmit: len=");
+    MUON_LOG_U32(length);
+    MUON_LOG_STR(" B, freq=");
+    MUON_LOG_FLOAT(_lastConfig.frequencyMHz, 1);
+    MUON_LOG_STR(" MHz, SF=");
+    MUON_LOG_U32(_lastConfig.spreadingFactor);
+    MUON_LOG_LN("");
+
     _currentAction = Action::TX_IN_PROGRESS;
     int state = _radio.startTransmit(const_cast<uint8_t*>(buffer), length);
     if (state != RADIOLIB_ERR_NONE) {
+        MUON_LOG_STR("[Radio] ERROR: startTransmit failed, state=");
+        MUON_LOG_I32(state);
+        MUON_LOG_LN("");
         _currentAction = Action::IDLE;
         return false;
     }
@@ -85,9 +97,14 @@ void RadioLibLoRaModem::handleInterrupt() {
 
     if (_currentAction == Action::TX_IN_PROGRESS) {
         _currentAction = Action::IDLE;
+        _radio.finishTransmit();
+        MUON_LOG_LN("[Radio] SX1276 DIO0 IRQ: TxDone (finishTransmit completed)");
         _callback->onTxDone();
     } else if (_currentAction == Action::RX_IN_PROGRESS) {
         size_t len = _radio.getPacketLength();
+        MUON_LOG_STR("[Radio] SX1276 DIO0 IRQ: RxDone, packet len=");
+        MUON_LOG_U32(len);
+        MUON_LOG_LN(" B");
         _callback->onRxDone(len);
     }
 }

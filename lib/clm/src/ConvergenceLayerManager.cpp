@@ -8,6 +8,7 @@
  */
 
 #include <muon/clm/ConvergenceLayerManager.h>
+#include <muon/common/Logger.h>
 
 namespace muon {
 namespace clm {
@@ -95,11 +96,30 @@ void ConvergenceLayerManager::onEvent(const ggg::system::SystemEvent& event) {
         }
 
         uint8_t qos = event.priority;
+        MUON_LOG_STR("[CLM] Processing MUON_EVT_ROUTE_REQ for Handle ");
+        MUON_LOG_U32(bundleHandle);
+        MUON_LOG_STR(" (QoS: ");
+        MUON_LOG_U32(qos);
+        MUON_LOG_LN(")...");
 
         // Case 1: Explicit target link ID provided in payload.u32[1]
         if (event.payload.u32[1] != 0) {
             uint8_t linkId = static_cast<uint8_t>(event.payload.u32[1] & 0xFF);
-            transmit(linkId, bundleHandle, qos);
+            MUON_LOG_STR("[CLM] Explicit route link specified: Link ID ");
+            MUON_LOG_U32(linkId);
+            MUON_LOG_LN("");
+            bool txOk = transmit(linkId, bundleHandle, qos);
+            if (!txOk) {
+                MUON_LOG_STR("[CLM] ERROR: Adapter Link ID ");
+                MUON_LOG_U32(linkId);
+                MUON_LOG_LN(" rejected transmit()! Publishing TX_FAILURE.");
+                ggg::system::SystemEvent failEv = {};
+                failEv.type = muon::events::MUON_EVT_TX_FAILURE;
+                failEv.source = linkId;
+                failEv.priority = qos;
+                failEv.payload.u32[0] = bundleHandle;
+                ggg::system::SystemBus::getInstance().publish(failEv);
+            }
             return;
         }
 
@@ -110,12 +130,49 @@ void ConvergenceLayerManager::onEvent(const ggg::system::SystemEvent& event) {
             size_t payloadLength = 0;
 
             if (bpa::CBORSerializer::deserializeBundleHeader(inStream, header, payloadLength)) {
+                MUON_LOG_STR("[CLM] Stream header inspected: Dest=ipn:");
+                MUON_LOG_U32(header.destination.nodeNbr);
+                MUON_LOG_STR(".");
+                MUON_LOG_U32(header.destination.serviceNbr);
+                MUON_LOG_STR(", Src=ipn:");
+                MUON_LOG_U32(header.source.nodeNbr);
+                MUON_LOG_STR(".");
+                MUON_LOG_U32(header.source.serviceNbr);
+                MUON_LOG_STR(", PayloadSize=");
+                MUON_LOG_U32(payloadLength);
+                MUON_LOG_LN(" B");
+
                 uint8_t targetLinkId = 0;
                 routing::RouteDecision decision = _router->evaluate(header, targetLinkId);
 
                 if (decision == routing::RouteDecision::FORWARD_DIRECT) {
-                    transmit(targetLinkId, bundleHandle, qos);
+                    MUON_LOG_STR("[CLM] Dispatching bundle ");
+                    MUON_LOG_U32(bundleHandle);
+                    MUON_LOG_STR(" to Adapter Link ID ");
+                    MUON_LOG_U32(targetLinkId);
+                    MUON_LOG_LN("...");
+
+                    bool txOk = transmit(targetLinkId, bundleHandle, qos);
+                    if (!txOk) {
+                        MUON_LOG_STR("[CLM] ERROR: Adapter Link ID ");
+                        MUON_LOG_U32(targetLinkId);
+                        MUON_LOG_LN(" rejected transmit()! Publishing TX_FAILURE.");
+                        ggg::system::SystemEvent failEv = {};
+                        failEv.type = muon::events::MUON_EVT_TX_FAILURE;
+                        failEv.source = targetLinkId;
+                        failEv.priority = qos;
+                        failEv.payload.u32[0] = bundleHandle;
+                        ggg::system::SystemBus::getInstance().publish(failEv);
+                    }
+                } else if (decision == routing::RouteDecision::DELIVER_LOCAL) {
+                    MUON_LOG_LN("[CLM] Routing indicated local delivery; bundle remains in local custody.");
+                } else {
+                    MUON_LOG_LN("[CLM] Routing indicated STORE_FOR_LATER; bundle held in custody.");
                 }
+            } else {
+                MUON_LOG_STR("[CLM] ERROR: Failed to deserialize bundle header from Handle ");
+                MUON_LOG_U32(bundleHandle);
+                MUON_LOG_LN("!");
             }
         }
     }

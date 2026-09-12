@@ -55,6 +55,7 @@
 #endif
 
 #include "autoconf.h"
+#include <muon/common/Logger.h>
 
 // ----------------------------------------------------------------------------
 // 1. Diagnostic Logging Discipline
@@ -65,12 +66,22 @@
   #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
     #define MUON_LOG(x)   Serial1.print(x)
     #define MUON_LOGLN(x) Serial1.println(x)
+    static void arduinoLogStr(const char* s) { Serial1.print(s); }
+    static void arduinoLogLn(const char* s) { Serial1.println(s); }
+    static void arduinoLogU32(uint32_t v) { Serial1.print(v); }
+    static void arduinoLogI32(int32_t v) { Serial1.print(v); }
+    static void arduinoLogFloat(float v, uint8_t d) { Serial1.print(v, d); }
   #elif defined(CONFIG_MUON_NODE_ROLE_B) && defined(CONFIG_MUON_UART_COBS_ENABLED)
     #define MUON_LOG(x)   do {} while (0)
     #define MUON_LOGLN(x) do {} while (0)
   #else
     #define MUON_LOG(x)   Serial.print(x)
     #define MUON_LOGLN(x) Serial.println(x)
+    static void arduinoLogStr(const char* s) { Serial.print(s); }
+    static void arduinoLogLn(const char* s) { Serial.println(s); }
+    static void arduinoLogU32(uint32_t v) { Serial.print(v); }
+    static void arduinoLogI32(int32_t v) { Serial.print(v); }
+    static void arduinoLogFloat(float v, uint8_t d) { Serial.print(v, d); }
   #endif
 #else
   #define MUON_LOG(x)   do {} while (0)
@@ -308,7 +319,7 @@ static void ClmTickTask(void *pvParameters) {
     uint16_t secondCounter = 0;
 
     while (true) {
-        if (g_loraInterruptPending) {
+        if (g_loraInterruptPending || digitalRead(CONFIG_MUON_LORA_PIN_DIO0) == HIGH) {
             g_loraInterruptPending = false;
             g_loraModem.handleInterrupt();
         }
@@ -375,6 +386,14 @@ void setup() {
     delay(200);
 #endif
 
+#if defined(CONFIG_MUON_DEBUG)
+  #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
+    muon::log::Logger::setSinks(arduinoLogStr, arduinoLogLn, arduinoLogU32, arduinoLogI32, arduinoLogFloat);
+  #elif !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_ENABLED)
+    muon::log::Logger::setSinks(arduinoLogStr, arduinoLogLn, arduinoLogU32, arduinoLogI32, arduinoLogFloat);
+  #endif
+#endif
+
     // Fast 3-blink startup sequence to give immediate visual confirmation of boot
     for (int i = 0; i < 3; i++) {
         digitalWrite(LED_BUILTIN, HIGH);
@@ -384,7 +403,7 @@ void setup() {
     }
 
     MUON_LOGLN(F("=========================================="));
-    MUON_LOGLN(F(" muON-DTN: Micro Interplanetary Overlay   "));
+    MUON_LOGLN(F(" muON-DTN: microcontroller Overlay Network"));
     MUON_LOGLN(F("=========================================="));
 
     // 1. Initialise SystemBus and Storage

@@ -8,6 +8,7 @@
  */
 
 #include "muon/lora/LoRaConvergenceLayer.h"
+#include "muon/common/Logger.h"
 #include <string.h>
 
 namespace muon {
@@ -39,6 +40,7 @@ LoRaConvergenceLayer::LoRaConvergenceLayer(uint8_t linkId,
       _txQos(0),
       _txSessionId(0),
       _txAckStartTimeMs(0),
+      _txSegmentStartTimeMs(0),
       _rxState(RxState::IDLE),
       _rxBundleHandle(GGG_INVALID_HANDLE),
       _rxSessionId(0),
@@ -56,11 +58,11 @@ bool LoRaConvergenceLayer::begin() {
     if (_modem == nullptr) {
         return false;
     }
-    if (_modem->begin(_config, this)) {
+    bool ok = _modem->begin(_config, this);
+    if (ok) {
         _modem->startReceive();
-        return true;
     }
-    return false;
+    return ok;
 }
 
 uint8_t LoRaConvergenceLayer::getLinkId() const {
@@ -75,30 +77,50 @@ uint32_t LoRaConvergenceLayer::getNowMs() {
 }
 
 bool LoRaConvergenceLayer::transmitBundle(ggg::hal::StorageHandle_t bundleHandle, uint8_t qos) {
+    MUON_LOG_STR("[LoRaCL] transmitBundle: Handle=");
+    MUON_LOG_U32(bundleHandle);
+    MUON_LOG_STR(", QoS=");
+    MUON_LOG_U32(qos);
+    MUON_LOG_LN(qos == 1 ? " (Notified)" : " (Unreliable)");
+
     if (_txState != TxState::IDLE || _modem == nullptr || _storage == nullptr) {
+        MUON_LOG_STR("[LoRaCL] WARNING: TX rejected (State=");
+        MUON_LOG_I32(static_cast<int32_t>(_txState));
+        MUON_LOG_LN(" or null driver)");
         return false;
     }
 
     size_t totalBytes = _storage->getSize(bundleHandle);
     if (totalBytes == 0) {
+        MUON_LOG_LN("[LoRaCL] ERROR: Bundle storage record size is 0 bytes!");
         return false;
     }
 
     size_t mtu = _modem->getMTU();
     if (mtu <= 3) {
+        MUON_LOG_LN("[LoRaCL] ERROR: Modem MTU too small (<= 3)!");
         return false;
     }
     size_t maxPayload = mtu - 3;
 
     size_t totalSegs = (totalBytes + maxPayload - 1) / maxPayload;
     if (totalSegs > 256 || totalSegs == 0) {
+        MUON_LOG_STR("[LoRaCL] ERROR: Total segments out of bounds (");
+        MUON_LOG_U32(totalSegs);
+        MUON_LOG_LN(" > 256)");
         return false;
     }
 
     if (_dutyCycleEnabled) {
         uint32_t segToA = _modem->getTimeOnAirMs(mtu);
         uint32_t totalToA = (uint32_t)(totalSegs * segToA);
+        MUON_LOG_STR("[LoRaCL] Duty Cycle check: Available=");
+        MUON_LOG_U32(_tokenBucket.getAvailableBudgetMs());
+        MUON_LOG_STR(" ms, Needed=");
+        MUON_LOG_U32(totalToA);
+        MUON_LOG_LN(" ms");
         if (!_tokenBucket.canTransmit(totalToA)) {
+            MUON_LOG_LN("[LoRaCL] ERROR: Duty Cycle budget exhausted! Transmission rejected.");
             return false;
         }
     }
@@ -110,6 +132,14 @@ bool LoRaConvergenceLayer::transmitBundle(ggg::hal::StorageHandle_t bundleHandle
     _txQos = qos;
     _txSessionId = (_sessionSeq++) & LORA_SESSION_MASK;
     _txState = TxState::SENDING_SEGMENT;
+
+    MUON_LOG_STR("[LoRaCL] Packet segmented: ");
+    MUON_LOG_U32(_txTotalSegments);
+    MUON_LOG_STR(" segment(s) for ");
+    MUON_LOG_U32(_txTotalBytes);
+    MUON_LOG_STR(" bytes. Session ID: ");
+    MUON_LOG_U32(_txSessionId);
+    MUON_LOG_LN("");
 
     sendNextSegment();
     return true;
@@ -136,13 +166,29 @@ void LoRaConvergenceLayer::sendNextSegment() {
     _storage->readData(_txBundleHandle, offset, _txBuffer + 3, chunkLen);
 
     size_t packetLen = 3 + chunkLen;
+    uint32_t toa = 0;
     if (_dutyCycleEnabled) {
-        uint32_t toa = _modem->getTimeOnAirMs(packetLen);
+        toa = _modem->getTimeOnAirMs(packetLen);
         _tokenBucket.consume(toa);
     }
 
+    _txSegmentStartTimeMs = getNowMs();
+
+    MUON_LOG_STR("[LoRaCL] Sending segment ");
+    MUON_LOG_U32(_txCurrentSegment + 1);
+    MUON_LOG_STR("/");
+    MUON_LOG_U32(_txTotalSegments);
+    MUON_LOG_STR(" (Payload: ");
+    MUON_LOG_U32(chunkLen);
+    MUON_LOG_STR(" B, Wire: ");
+    MUON_LOG_U32(packetLen);
+    MUON_LOG_STR(" B, ToA: ");
+    MUON_LOG_U32(toa);
+    MUON_LOG_LN(" ms)...");
+
     bool started = _modem->transmitAsync(_txBuffer, packetLen);
     if (!started) {
+        MUON_LOG_LN("[LoRaCL] ERROR: Modem transmitAsync failed! Aborting transmission.");
         _txState = TxState::IDLE;
         _modem->startReceive();
 
@@ -181,11 +227,18 @@ void LoRaConvergenceLayer::sendReject(uint8_t sessionId, uint8_t reasonCode) {
 void LoRaConvergenceLayer::onTxDone() {
     if (_sendingControlFrame) {
         _sendingControlFrame = false;
+        MUON_LOG_LN("[LoRaCL] Control frame sent. Listening for incoming traffic...");
         _modem->startReceive();
         return;
     }
 
     if (_txState == TxState::SENDING_SEGMENT) {
+        MUON_LOG_STR("[LoRaCL] Segment ");
+        MUON_LOG_U32(_txCurrentSegment + 1);
+        MUON_LOG_STR("/");
+        MUON_LOG_U32(_txTotalSegments);
+        MUON_LOG_LN(" transmitted over the air.");
+
         _txCurrentSegment++;
         if (_txCurrentSegment < _txTotalSegments) {
             sendNextSegment();
@@ -193,6 +246,7 @@ void LoRaConvergenceLayer::onTxDone() {
             // All segments sent
             if (_txQos == 0) {
                 // Unreliable: complete immediately
+                MUON_LOG_LN("[LoRaCL] All segments sent (Unreliable QoS) -> TX_SUCCESS.");
                 _txState = TxState::IDLE;
                 _modem->startReceive();
 
@@ -206,6 +260,9 @@ void LoRaConvergenceLayer::onTxDone() {
                 // Notified: wait for BDL_XFER_ACK
                 _txState = TxState::WAIT_ACK;
                 _txAckStartTimeMs = getNowMs();
+                MUON_LOG_STR("[LoRaCL] All segments sent (Notified QoS) -> Waiting for ACK (Timeout: ");
+                MUON_LOG_U32(_ackTimeoutMs);
+                MUON_LOG_LN(" ms)...");
                 _modem->startReceive();
             }
         }
@@ -222,14 +279,26 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
         return;
     }
 
+    MUON_LOG_STR("[LoRaCL] RX packet: len=");
+    MUON_LOG_U32(rLen);
+    MUON_LOG_STR(" B, RSSI=");
+    MUON_LOG_FLOAT(_modem->getRSSI(), 1);
+    MUON_LOG_STR(" dBm, SNR=");
+    MUON_LOG_FLOAT(_modem->getSNR(), 1);
+    MUON_LOG_LN(" dB");
+
     uint8_t control = _rxBuffer[0];
     uint8_t type = getMessageType(control);
     uint8_t sc = getServiceClass(control);
     uint8_t session = getSessionId(control);
 
     if (type == LORA_TYPE_ACK) {
+        MUON_LOG_STR("[LoRaCL] Received BDL_XFER_ACK for Session ");
+        MUON_LOG_U32(session);
+        MUON_LOG_LN("");
         if (_txState == TxState::WAIT_ACK && session == _txSessionId) {
             _txState = TxState::IDLE;
+            MUON_LOG_LN("[LoRaCL] ACK matched active session! Publishing TX_SUCCESS.");
             ggg::system::SystemEvent ev = {};
             ev.type = muon::events::MUON_EVT_TX_SUCCESS;
             ev.source = _linkId;
@@ -242,6 +311,12 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
     }
 
     if (type == LORA_TYPE_REFUSE || type == LORA_TYPE_MSG_REJECT) {
+        uint8_t reason = (rLen >= 2) ? _rxBuffer[1] : 0xFF;
+        MUON_LOG_STR("[LoRaCL] Received REFUSE/REJECT (Reason: 0x");
+        MUON_LOG_U32(reason);
+        MUON_LOG_STR(") for Session ");
+        MUON_LOG_U32(session);
+        MUON_LOG_LN("");
         if (_txState != TxState::IDLE && session == _txSessionId) {
             _txState = TxState::IDLE;
             ggg::system::SystemEvent ev = {};
@@ -266,6 +341,16 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
         uint16_t totalSegs = (totalSegsRaw == 0) ? 256 : totalSegsRaw;
         const uint8_t* payload = _rxBuffer + 3;
         size_t payloadLen = rLen - 3;
+
+        MUON_LOG_STR("[LoRaCL] Ingress segment ");
+        MUON_LOG_U32(segIdx + 1);
+        MUON_LOG_STR("/");
+        MUON_LOG_U32(totalSegs);
+        MUON_LOG_STR(" (Session: ");
+        MUON_LOG_U32(session);
+        MUON_LOG_STR(", SC: ");
+        MUON_LOG_U32(sc);
+        MUON_LOG_LN(")");
 
         if (_rxState == RxState::IDLE) {
             if (_storage == nullptr) {
@@ -315,6 +400,10 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
                     sendAck(session);
                 }
 
+                MUON_LOG_STR("[LoRaCL] Bundle completely reassembled (Handle: ");
+                MUON_LOG_U32(committedHandle);
+                MUON_LOG_LN("). Publishing MUON_EVT_RX_READY.");
+
                 ggg::system::SystemEvent ev = {};
                 ev.type = muon::events::MUON_EVT_RX_READY;
                 ev.source = _linkId;
@@ -338,7 +427,27 @@ void LoRaConvergenceLayer::tick() {
 
     if (_txState == TxState::WAIT_ACK) {
         if (now - _txAckStartTimeMs >= _ackTimeoutMs) {
+            MUON_LOG_STR("[LoRaCL] ACK timeout (");
+            MUON_LOG_U32(_ackTimeoutMs);
+            MUON_LOG_STR(" ms) expired for Session ");
+            MUON_LOG_U32(_txSessionId);
+            MUON_LOG_LN("! Publishing TX_FAILURE.");
+
             _txState = TxState::IDLE;
+
+            ggg::system::SystemEvent ev = {};
+            ev.type = muon::events::MUON_EVT_TX_FAILURE;
+            ev.source = _linkId;
+            ev.priority = 100;
+            ev.payload.u32[0] = _txBundleHandle;
+            ggg::system::SystemBus::getInstance().publish(ev);
+        }
+    } else if (_txState == TxState::SENDING_SEGMENT) {
+        // Watchdog against hardware TX lockup (5000 ms per segment)
+        if (_txSegmentStartTimeMs > 0 && (now - _txSegmentStartTimeMs >= 5000)) {
+            MUON_LOG_LN("[LoRaCL] WARNING: Segment TX watchdog timeout (5000 ms)! Aborting TX.");
+            _txState = TxState::IDLE;
+            _modem->startReceive();
 
             ggg::system::SystemEvent ev = {};
             ev.type = muon::events::MUON_EVT_TX_FAILURE;
@@ -351,6 +460,9 @@ void LoRaConvergenceLayer::tick() {
 
     if (_rxState == RxState::RECEIVING) {
         if (now - _rxStartTimeMs >= _reassemblyTimeoutMs) {
+            MUON_LOG_STR("[LoRaCL] RX reassembly timeout (");
+            MUON_LOG_U32(_reassemblyTimeoutMs);
+            MUON_LOG_LN(" ms)! Rolling back bundle.");
             if (_storage != nullptr && _rxBundleHandle != GGG_INVALID_HANDLE) {
                 _storage->abortWrite(_rxBundleHandle);
             }

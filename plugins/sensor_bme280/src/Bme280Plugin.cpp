@@ -8,6 +8,7 @@
  */
 
 #include "muon/plugins/Bme280Plugin.h"
+#include "muon/common/Logger.h"
 #include <cstdio>
 #include <cstring>
 
@@ -92,7 +93,31 @@ bool Bme280Plugin::readAndSend() {
         return false;
     }
 
+    MUON_LOG_STR("[BME280] Sampled sensor: T=");
+    MUON_LOG_FLOAT(tempC, 2);
+    MUON_LOG_STR(" C, H=");
+    MUON_LOG_FLOAT(humidityPercent, 2);
+    MUON_LOG_STR(" %, P=");
+    MUON_LOG_FLOAT(pressureHpa, 2);
+    MUON_LOG_LN(" hPa");
+
+    MUON_LOG_STR("[BME280] Generated ADU (");
+    MUON_LOG_U32(len);
+    MUON_LOG_STR(" bytes): ");
+    MUON_LOG_STR(jsonBuf);
+    MUON_LOG_LN("");
+
     muon::bpa::IpnEndpointId destEid = { _destNode, _destService };
+    MUON_LOG_STR("[BME280] Submitting bundle to BPA: Dest=ipn:");
+    MUON_LOG_U32(_destNode);
+    MUON_LOG_STR(".");
+    MUON_LOG_U32(_destService);
+    MUON_LOG_STR(", Priority=");
+    MUON_LOG_U32(_priority);
+    MUON_LOG_STR(", Lifetime=");
+    MUON_LOG_U32(_lifetimeSec);
+    MUON_LOG_LN("s");
+
     bool ok = _bpa->sendLocalData(destEid, 
                                   reinterpret_cast<const uint8_t*>(jsonBuf), 
                                   static_cast<size_t>(len), 
@@ -101,6 +126,11 @@ bool Bme280Plugin::readAndSend() {
 
     if (ok) {
         _transmittedCount++;
+        MUON_LOG_STR("[BME280] Bundle accepted by BPA (Count: ");
+        MUON_LOG_U32(_transmittedCount);
+        MUON_LOG_LN(")");
+    } else {
+        MUON_LOG_LN("[BME280] ERROR: BPA rejected bundle submission!");
     }
 
     return ok;

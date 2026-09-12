@@ -8,6 +8,7 @@
  */
 
 #include <muon/routing/StaticRoutingEngine.h>
+#include <muon/common/Logger.h>
 
 namespace muon {
 namespace routing {
@@ -98,8 +99,15 @@ RouteDecision StaticRoutingEngine::evaluate(const bpa::BundleHeader& header, uin
 }
 
 RouteDecision StaticRoutingEngine::evaluateNode(uint32_t destinationNode, uint8_t& outLinkId) {
+    MUON_LOG_STR("[Routing] Evaluating route for Dest Node ");
+    MUON_LOG_U32(destinationNode);
+    MUON_LOG_STR(" (Local Node: ");
+    MUON_LOG_U32(_localEid.nodeNbr);
+    MUON_LOG_LN(")...");
+
     // Local destination check
     if (destinationNode == _localEid.nodeNbr && _localEid.nodeNbr != 0) {
+        MUON_LOG_LN("[Routing] -> Destination matches local node: DELIVER_LOCAL");
         return RouteDecision::DELIVER_LOCAL;
     }
 
@@ -107,6 +115,11 @@ RouteDecision StaticRoutingEngine::evaluateNode(uint32_t destinationNode, uint8_
     for (size_t i = 0; i < MAX_ROUTES; ++i) {
         if (_routes[i].isActive && _routes[i].destinationNode == destinationNode) {
             outLinkId = _routes[i].targetLinkId;
+            MUON_LOG_STR("[Routing] -> Matched route: Dest Node ");
+            MUON_LOG_U32(destinationNode);
+            MUON_LOG_STR(" -> Link ID ");
+            MUON_LOG_U32(outLinkId);
+            MUON_LOG_LN(" (FORWARD_DIRECT)");
             return RouteDecision::FORWARD_DIRECT;
         }
     }
@@ -114,10 +127,16 @@ RouteDecision StaticRoutingEngine::evaluateNode(uint32_t destinationNode, uint8_
     // Fallback to default route if configured
     if (_hasDefaultRoute) {
         outLinkId = _defaultRouteLinkId;
+        MUON_LOG_STR("[Routing] -> Default route fallback: Link ID ");
+        MUON_LOG_U32(outLinkId);
+        MUON_LOG_LN(" (FORWARD_DIRECT)");
         return RouteDecision::FORWARD_DIRECT;
     }
 
     // No route found: store in custody for opportunistic forwarding
+    MUON_LOG_STR("[Routing] -> No route found for Node ");
+    MUON_LOG_U32(destinationNode);
+    MUON_LOG_LN(": STORE_FOR_LATER");
     return RouteDecision::STORE_FOR_LATER;
 }
 
