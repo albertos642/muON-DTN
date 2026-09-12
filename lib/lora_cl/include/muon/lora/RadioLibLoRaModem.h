@@ -47,6 +47,8 @@ private:
     IModemCallback* _callback;
     volatile Action _currentAction;
     LoRaConfig _lastConfig;
+    float _cachedRssi;
+    float _cachedSnr;
 
 public:
     RadioLibLoRaModem(uint32_t csPin, uint32_t dio0Pin, uint32_t resetPin, uint32_t dio1Pin = RADIOLIB_NC);
@@ -55,11 +57,12 @@ public:
     bool transmitAsync(const uint8_t* buffer, size_t length) override;
     size_t receive(uint8_t* buffer, size_t maxLength) override;
     void startReceive() override;
+    void forceStandby() override;
     size_t getMTU() const override { return 255; }
     void handleInterrupt() override;
     uint32_t getTimeOnAirMs(size_t packetLength) const override;
-    float getRSSI() const override { return _radio.getRSSI(); }
-    float getSNR() const override { return _radio.getSNR(); }
+    float getRSSI() const override { return _cachedRssi; }
+    float getSNR() const override { return _cachedSnr; }
 };
 
 } // namespace lora

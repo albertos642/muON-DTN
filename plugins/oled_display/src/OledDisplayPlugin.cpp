@@ -35,6 +35,7 @@ OledDisplayPlugin::OledDisplayPlugin(IOledRenderer* renderer,
     _data.lastSnr = 0;
     _data.uptimeSec = 0;
     _data.heartbeatChar = '|';
+    _data.isHostConnected = false;
     snprintf(_data.lastActionStr, sizeof(_data.lastActionStr), "Waiting traffic");
 }
 
@@ -66,6 +67,13 @@ void OledDisplayPlugin::updateRfTelemetry(int16_t rssi, int8_t snr) {
     _data.lastRssi = rssi;
     _data.lastSnr = snr;
     _isDirty = true;
+}
+
+void OledDisplayPlugin::setHostConnected(bool connected) {
+    if (_data.isHostConnected != connected) {
+        _data.isHostConnected = connected;
+        _isDirty = true;
+    }
 }
 
 void OledDisplayPlugin::updateStorageCount() {

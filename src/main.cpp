@@ -295,8 +295,8 @@ public:
             digitalWrite(LED_BUILTIN, HIGH);
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-            g_oledPlugin.updateRfTelemetry(static_cast<int16_t>(g_loraModem.getRSSI()),
-                                           static_cast<int8_t>(g_loraModem.getSNR()));
+            g_oledPlugin.updateRfTelemetry(static_cast<int16_t>(g_loraCl.getLastRssi()),
+                                           static_cast<int8_t>(g_loraCl.getLastSnr()));
 #endif
         } else if (event.type == muon::events::MUON_EVT_TX_SUCCESS) {
             MUON_LOG(F("[muON] TX Success! Bundle "));
@@ -341,6 +341,9 @@ static void ClmTickTask(void *pvParameters) {
         g_clm.tickAll();
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+#if defined(CONFIG_MUON_UART_COBS_ENABLED)
+        g_oledPlugin.setHostConnected(g_uartCl.isHostConnected());
+#endif
         g_oledPlugin.tick(millis());
 #endif
 
@@ -419,7 +422,19 @@ void setup() {
     // 1. Initialise SystemBus and Storage
     ggg::system::SystemBus::getInstance().init();
     ggg::system::SystemBus::getInstance().subscribe(&g_appListener);
-    g_storage.begin();
+    if (g_storage.begin()) {
+        MUON_LOGLN(F("[Storage] Storage backend initialized successfully."));
+#if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH)
+        if (g_storage.getHal() != nullptr) {
+            uint32_t jedec = g_storage.getHal()->readJedecId();
+            MUON_LOG(F("[Flash] W25Q JEDEC ID: 0x"));
+            MUON_LOG(jedec);
+            MUON_LOGLN(F(""));
+        }
+#endif
+    } else {
+        MUON_LOGLN(F("[Storage] ERROR: Storage backend initialization failed!"));
+    }
 
 #if defined(CONFIG_MUON_I2C_SHARED_BUS) && defined(ARDUINO) && !defined(TARGET_NATIVE)
     Wire.begin();
@@ -488,6 +503,9 @@ void setup() {
 
     // 3. Register Convergence Layers
     g_loraCl.setTimeProvider(getArduinoMillis);
+#if defined(CONFIG_MUON_UART_COBS_ENABLED)
+    g_uartCl.setTimeProvider(getArduinoMillis);
+#endif
     g_clm.registerAdapter(&g_loraCl);
     g_clm.registerAdapter(&g_uartCl);
     g_clm.init();

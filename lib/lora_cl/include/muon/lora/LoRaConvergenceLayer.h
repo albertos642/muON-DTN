@@ -87,6 +87,10 @@ private:
     bool     _sendingControlFrame;
     uint32_t _controlFrameStartTimeMs;
     uint8_t  _ctrlBuffer[4];
+    ggg::hal::StorageHandle_t _pendingRxBundleHandle;
+
+    int16_t  _lastRssi;
+    int8_t   _lastSnr;
 
     uint32_t getNowMs();
     void sendNextSegment();
@@ -119,6 +123,8 @@ public:
 
     TxState getTxState() const { return _txState; }
     RxState getRxState() const { return _rxState; }
+    int16_t getLastRssi() const { return _lastRssi; }
+    int8_t  getLastSnr() const { return _lastSnr; }
 
     // IConvergenceLayer interface
     uint8_t getLinkId() const override;

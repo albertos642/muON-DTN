@@ -10,6 +10,10 @@
 #include "muon/uartcobs/UartCobsConvergenceLayer.h"
 #include <muon/common/Logger.h>
 
+#if defined(ARDUINO)
+#include <Arduino.h>
+#endif
+
 namespace muon {
 namespace uartcobs {
 
@@ -24,6 +28,11 @@ UartCobsConvergenceLayer::UartCobsConvergenceLayer(uint8_t linkId,
       _storage(storage),
       _timeSyncCallback(nullptr),
       _timeSyncEnabled(timeSyncEnabled),
+      _timeProvider(nullptr),
+      _internalTickMs(0),
+      _lastSyncReqMs(0),
+      _lastSyncRxMs(0),
+      _isHostConnected(false),
       _currentRxHandle(GGG_INVALID_HANDLE),
       _rxByteIndex(0),
       _runningRxCrc(Crc16Ccitt::INITIAL_VALUE),
@@ -41,6 +50,25 @@ UartCobsConvergenceLayer::UartCobsConvergenceLayer(uint8_t linkId,
 
 uint8_t UartCobsConvergenceLayer::getLinkId() const {
     return _linkId;
+}
+
+uint32_t UartCobsConvergenceLayer::getNowMs() {
+    if (_timeProvider != nullptr) {
+        return _timeProvider();
+    }
+#if defined(ARDUINO)
+    return millis();
+#else
+    return _internalTickMs;
+#endif
+}
+
+bool UartCobsConvergenceLayer::isHostConnected() const {
+    if (!_isHostConnected) {
+        return false;
+    }
+    uint32_t now = const_cast<UartCobsConvergenceLayer*>(this)->getNowMs();
+    return (now - _lastSyncRxMs < 12000);
 }
 
 void UartCobsConvergenceLayer::resetRxState() {
@@ -85,6 +113,9 @@ void UartCobsConvergenceLayer::feedWireByte(uint8_t wireByte) {
                 uint16_t computedCrc = Crc16Ccitt::update(_runningRxCrc, _syncBuffer, 4);
                 uint16_t receivedCrc = ((uint16_t)_syncBuffer[4] << 8) | _syncBuffer[5];
                 if (computedCrc == receivedCrc) {
+                    _isHostConnected = true;
+                    _lastSyncRxMs = getNowMs();
+
                     uint32_t dtnTime = ((uint32_t)_syncBuffer[0] << 24) |
                                        ((uint32_t)_syncBuffer[1] << 16) |
                                        ((uint32_t)_syncBuffer[2] << 8) |
@@ -187,6 +218,14 @@ void UartCobsConvergenceLayer::feedWireByte(uint8_t wireByte) {
 }
 
 void UartCobsConvergenceLayer::tick() {
+    uint32_t now = getNowMs();
+    if (_timeSyncEnabled) {
+        if (_lastSyncReqMs == 0 || (now - _lastSyncReqMs >= 5000)) {
+            _lastSyncReqMs = now;
+            sendSyncRequest();
+        }
+    }
+
     if (_inStream == nullptr) {
         return;
     }

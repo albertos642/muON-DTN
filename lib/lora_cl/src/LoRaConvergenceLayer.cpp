@@ -49,7 +49,10 @@ LoRaConvergenceLayer::LoRaConvergenceLayer(uint8_t linkId,
       _rxSegmentsReceivedCount(0),
       _rxStartTimeMs(0),
       _sendingControlFrame(false),
-      _controlFrameStartTimeMs(0) {
+      _controlFrameStartTimeMs(0),
+      _pendingRxBundleHandle(GGG_INVALID_HANDLE),
+      _lastRssi(-120),
+      _lastSnr(0) {
     memset(_rxSegmentBitmask, 0, sizeof(_rxSegmentBitmask));
     memset(_txBuffer, 0, sizeof(_txBuffer));
     memset(_rxBuffer, 0, sizeof(_rxBuffer));
@@ -244,6 +247,22 @@ void LoRaConvergenceLayer::onTxDone() {
         _sendingControlFrame = false;
         MUON_LOG_LN("[LoRaCL] Control frame (ACK/Reject) transmitted over the air. Re-arming receiver...");
         _modem->startReceive();
+
+        if (_pendingRxBundleHandle != GGG_INVALID_HANDLE) {
+            ggg::hal::StorageHandle_t handleToPublish = _pendingRxBundleHandle;
+            _pendingRxBundleHandle = GGG_INVALID_HANDLE;
+
+            MUON_LOG_STR("[LoRaCL] Bundle completely reassembled (Handle: ");
+            MUON_LOG_U32(handleToPublish);
+            MUON_LOG_LN("). Publishing MUON_EVT_RX_READY.");
+
+            ggg::system::SystemEvent ev = {};
+            ev.type = muon::events::MUON_EVT_RX_READY;
+            ev.source = _linkId;
+            ev.priority = 100;
+            ev.payload.u32[0] = handleToPublish;
+            ggg::system::SystemBus::getInstance().publish(ev);
+        }
         return;
     }
 
@@ -294,12 +313,15 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
         return;
     }
 
+    _lastRssi = static_cast<int16_t>(_modem->getRSSI());
+    _lastSnr = static_cast<int8_t>(_modem->getSNR());
+
     MUON_LOG_STR("[LoRaCL] RX packet: len=");
     MUON_LOG_U32(rLen);
     MUON_LOG_STR(" B, RSSI=");
-    MUON_LOG_FLOAT(_modem->getRSSI(), 1);
+    MUON_LOG_I32(_lastRssi);
     MUON_LOG_STR(" dBm, SNR=");
-    MUON_LOG_FLOAT(_modem->getSNR(), 1);
+    MUON_LOG_I32(_lastSnr);
     MUON_LOG_LN(" dB");
 
     uint8_t control = _rxBuffer[0];
@@ -411,20 +433,25 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
                 _rxState = RxState::IDLE;
                 _rxBundleHandle = GGG_INVALID_HANDLE;
 
+                _lastRssi = static_cast<int16_t>(_modem->getRSSI());
+                _lastSnr = static_cast<int8_t>(_modem->getSNR());
+
                 if (_rxServiceClass == LORA_SC_NOTIFIED) {
+                    _pendingRxBundleHandle = committedHandle;
                     sendAck(session);
+                } else {
+                    _pendingRxBundleHandle = GGG_INVALID_HANDLE;
+                    MUON_LOG_STR("[LoRaCL] Bundle completely reassembled (Handle: ");
+                    MUON_LOG_U32(committedHandle);
+                    MUON_LOG_LN("). Publishing MUON_EVT_RX_READY.");
+
+                    ggg::system::SystemEvent ev = {};
+                    ev.type = muon::events::MUON_EVT_RX_READY;
+                    ev.source = _linkId;
+                    ev.priority = 100;
+                    ev.payload.u32[0] = committedHandle;
+                    ggg::system::SystemBus::getInstance().publish(ev);
                 }
-
-                MUON_LOG_STR("[LoRaCL] Bundle completely reassembled (Handle: ");
-                MUON_LOG_U32(committedHandle);
-                MUON_LOG_LN("). Publishing MUON_EVT_RX_READY.");
-
-                ggg::system::SystemEvent ev = {};
-                ev.type = muon::events::MUON_EVT_RX_READY;
-                ev.source = _linkId;
-                ev.priority = 100;
-                ev.payload.u32[0] = committedHandle;
-                ggg::system::SystemBus::getInstance().publish(ev);
             }
         }
     }
@@ -478,7 +505,24 @@ void LoRaConvergenceLayer::tick() {
         if (_controlFrameStartTimeMs > 0 && (now - _controlFrameStartTimeMs >= 2000)) {
             MUON_LOG_LN("[LoRaCL] WARNING: Control frame TX watchdog timeout (2000 ms)! Forcing receive mode.");
             _sendingControlFrame = false;
+            _modem->forceStandby();
             _modem->startReceive();
+
+            if (_pendingRxBundleHandle != GGG_INVALID_HANDLE) {
+                ggg::hal::StorageHandle_t handleToPublish = _pendingRxBundleHandle;
+                _pendingRxBundleHandle = GGG_INVALID_HANDLE;
+
+                MUON_LOG_STR("[LoRaCL] Bundle completely reassembled (Handle: ");
+                MUON_LOG_U32(handleToPublish);
+                MUON_LOG_LN("). Publishing MUON_EVT_RX_READY.");
+
+                ggg::system::SystemEvent ev = {};
+                ev.type = muon::events::MUON_EVT_RX_READY;
+                ev.source = _linkId;
+                ev.priority = 100;
+                ev.payload.u32[0] = handleToPublish;
+                ggg::system::SystemBus::getInstance().publish(ev);
+            }
         }
     }
 

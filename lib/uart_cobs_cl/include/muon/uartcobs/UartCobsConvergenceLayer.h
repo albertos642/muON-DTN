@@ -28,6 +28,7 @@ namespace muon {
 namespace uartcobs {
 
 typedef void (*DtnTimeSyncCallback)(uint32_t dtnEpochSeconds);
+typedef uint32_t (*UartCobsTimeProviderFn)();
 
 class UartCobsConvergenceLayer : public clm::IConvergenceLayer {
 private:
@@ -38,6 +39,12 @@ private:
 
     DtnTimeSyncCallback _timeSyncCallback;
     bool _timeSyncEnabled;
+
+    UartCobsTimeProviderFn _timeProvider;
+    uint32_t _internalTickMs;
+    uint32_t _lastSyncReqMs;
+    uint32_t _lastSyncRxMs;
+    bool _isHostConnected;
 
     // Stream-to-Storage RX State
     CobsStreamDecoder _cobsDecoder;
@@ -63,6 +70,7 @@ private:
     uint8_t _txBlock[254];
     size_t _txBlockLen;
 
+    uint32_t getNowMs();
     void flushRxStorageBuffer();
     void resetRxState();
     void feedWireByte(uint8_t wireByte);
@@ -75,11 +83,26 @@ public:
                              ggg::hal::IInputStream* inStream,
                              ggg::hal::IOutputStream* outStream,
                              ggg::hal::IStorage* storage,
-                             bool timeSyncEnabled = true);
+                             bool timeSyncEnabled = false);
 
     void setTimeSyncCallback(DtnTimeSyncCallback cb) {
         _timeSyncCallback = cb;
     }
+
+    void setTimeProvider(UartCobsTimeProviderFn fn) {
+        _timeProvider = fn;
+    }
+
+    void setTimeSyncEnabled(bool enabled) {
+        _timeSyncEnabled = enabled;
+    }
+
+    bool isTimeSyncEnabled() const {
+        return _timeSyncEnabled;
+    }
+
+    bool isHostConnected() const;
+    uint32_t getLastSyncRxMs() const { return _lastSyncRxMs; }
 
     void sendSyncRequest();
 

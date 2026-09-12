@@ -21,7 +21,9 @@ RadioLibLoRaModem::RadioLibLoRaModem(uint32_t csPin, uint32_t dio0Pin, uint32_t 
       _radio(&_module),
       _callback(nullptr),
       _currentAction(Action::IDLE),
-      _lastConfig{} {}
+      _lastConfig{},
+      _cachedRssi(-120.0f),
+      _cachedSnr(0.0f) {}
 
 bool RadioLibLoRaModem::begin(const LoRaConfig& config, IModemCallback* callback) {
     _callback = callback;
@@ -77,11 +79,21 @@ void RadioLibLoRaModem::startReceive() {
     _radio.startReceive();
 }
 
+void RadioLibLoRaModem::forceStandby() {
+    _currentAction = Action::IDLE;
+    _radio.standby();
+    _radio.finishTransmit();
+}
+
 size_t RadioLibLoRaModem::receive(uint8_t* buffer, size_t maxLength) {
     size_t length = _radio.getPacketLength();
     if (length == 0 || length > maxLength) {
         return 0;
     }
+
+    // Cache packet signal metrics immediately while modem is in RX/Standby
+    _cachedRssi = _radio.getRSSI();
+    _cachedSnr = _radio.getSNR();
 
     int state = _radio.readData(buffer, length);
     if (state == RADIOLIB_ERR_NONE) {

@@ -90,6 +90,11 @@ public:
      * @brief Returns the SNR of the last received packet in dB.
      */
     virtual float getSNR() const { return 0.0f; }
+
+    /**
+     * @brief Forces the transceiver into standby and resets active TX/RX state machines.
+     */
+    virtual void forceStandby() {}
 };
 
 } // namespace lora

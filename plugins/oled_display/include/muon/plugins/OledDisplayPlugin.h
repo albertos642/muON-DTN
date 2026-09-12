@@ -62,6 +62,7 @@ struct OledDashboardData {
     uint32_t uptimeSec;
     char     heartbeatChar;
     char     lastActionStr[32];
+    bool     isHostConnected;
 };
 
 /**
@@ -169,13 +170,19 @@ public:
         do {
             _u8g2->setFont(u8g2_font_6x10_tf);
 
-            // Row 1 (y=10): Role + Animated Heartbeat Spinner + Uptime
+            // Row 1 (y=10): Role + Animated Heartbeat Spinner + Uptime / ION status
             char lineBuf[32];
             uint32_t mm = (data.uptimeSec / 60) % 100;
             uint32_t ss = data.uptimeSec % 60;
-            snprintf(lineBuf, sizeof(lineBuf), "%s [%c] %02lu:%02lu", 
-                     data.roleStr, data.heartbeatChar ? data.heartbeatChar : '*',
-                     (unsigned long)mm, (unsigned long)ss);
+            if (data.roleStr[5] == 'B') {
+                const char* hostStr = data.isHostConnected ? "ION:OK" : "ION:--";
+                snprintf(lineBuf, sizeof(lineBuf), "Node B [%c] %s", 
+                         data.heartbeatChar ? data.heartbeatChar : '*', hostStr);
+            } else {
+                snprintf(lineBuf, sizeof(lineBuf), "%s [%c] %02lu:%02lu", 
+                         data.roleStr, data.heartbeatChar ? data.heartbeatChar : '*',
+                         (unsigned long)mm, (unsigned long)ss);
+            }
             _u8g2->drawStr(0, 10, lineBuf);
 
             // Row 2 (y=23): Status & Storage Count
@@ -252,6 +259,11 @@ public:
      * @brief Forces an immediate display repaint.
      */
     void forceRedraw();
+
+    /**
+     * @brief Updates host connection state (UARTCL-COBS with IONe).
+     */
+    void setHostConnected(bool connected);
 
     const OledDashboardData& getData() const { return _data; }
     IOledRenderer* getRenderer() const { return _renderer; }
