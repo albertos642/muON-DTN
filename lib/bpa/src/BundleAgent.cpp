@@ -255,9 +255,21 @@ void BundleAgent::handleRxReady(ggg::hal::StorageHandle_t bundleHandle) {
     MUON_LOG_U32(payloadLength);
     MUON_LOG_LN(" B");
 
-    // Check bundle expiration
+    // Check bundle expiration (RFC 9171 Section 4.2.5.1: creation timestamp 0 indicates unknown time and must never expire)
     uint32_t now = _timeProvider->getDtnTimestamp();
-    if (header.lifetime > 0 && now > (header.creationTimestamp + header.lifetime)) {
+    bool isExpired = false;
+    if (header.creationTimestamp > 0 && header.lifetime > 0) {
+        // Only evaluate expiration if both clocks operate in compatible epochs
+        bool bothEpoch = (now >= 1000000UL && header.creationTimestamp >= 1000000UL);
+        bool bothUptime = (now < 1000000UL && header.creationTimestamp < 1000000UL);
+        if (bothEpoch || bothUptime) {
+            if (now > (header.creationTimestamp + header.lifetime)) {
+                isExpired = true;
+            }
+        }
+    }
+
+    if (isExpired) {
         MUON_LOG_STR("[BPA] Bundle Handle ");
         MUON_LOG_U32(bundleHandle);
         MUON_LOG_LN(" has EXPIRED! Purging from storage.");
@@ -277,7 +289,7 @@ void BundleAgent::handleRxReady(ggg::hal::StorageHandle_t bundleHandle) {
     meta.storageHandle = bundleHandle;
     meta.destNode = header.destination.nodeNbr;
     meta.destService = header.destination.serviceNbr;
-    meta.expirationTime = static_cast<uint32_t>(header.creationTimestamp + header.lifetime);
+    meta.expirationTime = (header.creationTimestamp > 0) ? static_cast<uint32_t>(header.creationTimestamp + header.lifetime) : 0;
     meta.bpPriority = header.getPriority();
     meta.localRetryCount = 0;
     meta.localDynamicPriority = 0;

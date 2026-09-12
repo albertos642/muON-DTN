@@ -106,7 +106,14 @@ public:
     }
 
     void flush() override {
+#if defined(ARDUINO) && !defined(TARGET_NATIVE)
+        // On SAMD21 Native USB CDC (Serial), flush() is an unyielding busy-wait (while(head!=tail))
+        // that deadlocks FreeRTOS tasks if the host is not actively reading.
+        if (&_stream == &Serial) {
+            return;
+        }
         _stream.flush();
+#endif
     }
 
     size_t available() override {
@@ -283,6 +290,9 @@ public:
         } else if (event.type == muon::events::MUON_EVT_RX_READY) {
             MUON_LOG(F("[muON] Received Bundle Handle: "));
             MUON_LOGLN(event.payload.u32[0]);
+
+            // Flash LED_BUILTIN on RX activity
+            digitalWrite(LED_BUILTIN, HIGH);
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
             g_oledPlugin.updateRfTelemetry(static_cast<int16_t>(g_loraModem.getRSSI()),

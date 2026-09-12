@@ -8,6 +8,7 @@
  */
 
 #include "muon/uartcobs/UartCobsConvergenceLayer.h"
+#include <muon/common/Logger.h>
 
 namespace muon {
 namespace uartcobs {
@@ -231,6 +232,12 @@ bool UartCobsConvergenceLayer::transmitBundle(ggg::hal::StorageHandle_t bundleHa
         return false;
     }
 
+    MUON_LOG_STR("[UARTCL] Transmitting bundle Handle ");
+    MUON_LOG_U32(bundleHandle);
+    MUON_LOG_STR(" (");
+    MUON_LOG_U32(totalBytes);
+    MUON_LOG_LN(" B) via COBS framing...");
+
     // Step 1: Pre-calculate CRC-16 across Control Header and Bundle Payload
     uint8_t control = makeControlHeader(UARTCL_FLAG_DATA);
     uint16_t crc = Crc16Ccitt::update(Crc16Ccitt::INITIAL_VALUE, control);
@@ -266,6 +273,10 @@ bool UartCobsConvergenceLayer::transmitBundle(ggg::hal::StorageHandle_t bundleHa
     _outStream->write(UARTCL_DELIMITER);
     _outStream->flush();
 
+    MUON_LOG_STR("[UARTCL] Bundle ");
+    MUON_LOG_U32(bundleHandle);
+    MUON_LOG_LN(" sent over serial link. Publishing MUON_EVT_TX_SUCCESS.");
+
     // Signal TX Success on SystemBus
     ggg::system::SystemEvent ev = {};
     ev.type = muon::events::MUON_EVT_TX_SUCCESS;
@@ -282,6 +293,7 @@ void UartCobsConvergenceLayer::sendSyncRequest() {
         return;
     }
 
+    MUON_LOG_LN("[UARTCL] Transmitting SYNC request frame...");
     uint8_t control = makeControlHeader(UARTCL_FLAG_SYNC);
     uint16_t crc = Crc16Ccitt::update(Crc16Ccitt::INITIAL_VALUE, control);
     uint8_t raw[3] = {

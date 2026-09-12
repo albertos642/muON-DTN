@@ -84,7 +84,9 @@ private:
     uint32_t _rxSegmentBitmask[8]; // 256 bits for segment tracking
 
     // Pending control frame flag (e.g. ACK/REFUSE in transmission)
-    bool _sendingControlFrame;
+    bool     _sendingControlFrame;
+    uint32_t _controlFrameStartTimeMs;
+    uint8_t  _ctrlBuffer[4];
 
     uint32_t getNowMs();
     void sendNextSegment();

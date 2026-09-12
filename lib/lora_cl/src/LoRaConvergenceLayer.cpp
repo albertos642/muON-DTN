@@ -48,10 +48,12 @@ LoRaConvergenceLayer::LoRaConvergenceLayer(uint8_t linkId,
       _rxTotalSegments(0),
       _rxSegmentsReceivedCount(0),
       _rxStartTimeMs(0),
-      _sendingControlFrame(false) {
+      _sendingControlFrame(false),
+      _controlFrameStartTimeMs(0) {
     memset(_rxSegmentBitmask, 0, sizeof(_rxSegmentBitmask));
     memset(_txBuffer, 0, sizeof(_txBuffer));
     memset(_rxBuffer, 0, sizeof(_rxBuffer));
+    memset(_ctrlBuffer, 0, sizeof(_ctrlBuffer));
 }
 
 bool LoRaConvergenceLayer::begin() {
@@ -202,32 +204,45 @@ void LoRaConvergenceLayer::sendNextSegment() {
 }
 
 void LoRaConvergenceLayer::sendAck(uint8_t sessionId) {
-    LoRaCL_Header hdr;
-    hdr.control_session = makeControlWord(LORA_TYPE_ACK, 0, sessionId);
+    _ctrlBuffer[0] = makeControlWord(LORA_TYPE_ACK, 0, sessionId);
     _sendingControlFrame = true;
-    _modem->transmitAsync((const uint8_t*)&hdr, 1);
+    _controlFrameStartTimeMs = getNowMs();
+    MUON_LOG_STR("[LoRaCL] Sending BDL_XFER_ACK for Session ");
+    MUON_LOG_U32(sessionId);
+    MUON_LOG_LN("...");
+    _modem->transmitAsync(_ctrlBuffer, 1);
 }
 
 void LoRaConvergenceLayer::sendRefuse(uint8_t sessionId, uint8_t reasonCode, uint8_t sc) {
-    LoRaCL_Header hdr;
-    hdr.control_session = makeControlWord(LORA_TYPE_REFUSE, sc, sessionId);
-    hdr.reason_code = reasonCode;
+    _ctrlBuffer[0] = makeControlWord(LORA_TYPE_REFUSE, sc, sessionId);
+    _ctrlBuffer[1] = reasonCode;
     _sendingControlFrame = true;
-    _modem->transmitAsync((const uint8_t*)&hdr, 2);
+    _controlFrameStartTimeMs = getNowMs();
+    MUON_LOG_STR("[LoRaCL] Sending XFER_REFUSE (Reason: 0x");
+    MUON_LOG_U32(reasonCode);
+    MUON_LOG_STR(") for Session ");
+    MUON_LOG_U32(sessionId);
+    MUON_LOG_LN("...");
+    _modem->transmitAsync(_ctrlBuffer, 2);
 }
 
 void LoRaConvergenceLayer::sendReject(uint8_t sessionId, uint8_t reasonCode) {
-    LoRaCL_Header hdr;
-    hdr.control_session = makeControlWord(LORA_TYPE_MSG_REJECT, 0, sessionId);
-    hdr.reason_code = reasonCode;
+    _ctrlBuffer[0] = makeControlWord(LORA_TYPE_MSG_REJECT, 0, sessionId);
+    _ctrlBuffer[1] = reasonCode;
     _sendingControlFrame = true;
-    _modem->transmitAsync((const uint8_t*)&hdr, 2);
+    _controlFrameStartTimeMs = getNowMs();
+    MUON_LOG_STR("[LoRaCL] Sending MSG_REJECT (Reason: 0x");
+    MUON_LOG_U32(reasonCode);
+    MUON_LOG_STR(") for Session ");
+    MUON_LOG_U32(sessionId);
+    MUON_LOG_LN("...");
+    _modem->transmitAsync(_ctrlBuffer, 2);
 }
 
 void LoRaConvergenceLayer::onTxDone() {
     if (_sendingControlFrame) {
         _sendingControlFrame = false;
-        MUON_LOG_LN("[LoRaCL] Control frame sent. Listening for incoming traffic...");
+        MUON_LOG_LN("[LoRaCL] Control frame (ACK/Reject) transmitted over the air. Re-arming receiver...");
         _modem->startReceive();
         return;
     }
@@ -455,6 +470,15 @@ void LoRaConvergenceLayer::tick() {
             ev.priority = 100;
             ev.payload.u32[0] = _txBundleHandle;
             ggg::system::SystemBus::getInstance().publish(ev);
+        }
+    }
+
+    if (_sendingControlFrame) {
+        // Watchdog against control frame (ACK/NACK) TX lockup (2000 ms)
+        if (_controlFrameStartTimeMs > 0 && (now - _controlFrameStartTimeMs >= 2000)) {
+            MUON_LOG_LN("[LoRaCL] WARNING: Control frame TX watchdog timeout (2000 ms)! Forcing receive mode.");
+            _sendingControlFrame = false;
+            _modem->startReceive();
         }
     }
 

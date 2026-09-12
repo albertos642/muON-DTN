@@ -58,6 +58,10 @@ struct OledDashboardData {
     char     lastMessage[48];
     uint32_t lastMessageTime;
     bool     hasNewMessage;
+    // Enhanced Diagnostics
+    uint32_t uptimeSec;
+    char     heartbeatChar;
+    char     lastActionStr[32];
 };
 
 /**
@@ -165,26 +169,37 @@ public:
         do {
             _u8g2->setFont(u8g2_font_6x10_tf);
 
-            // Row 1 (y=10): Header
+            // Row 1 (y=10): Role + Animated Heartbeat Spinner + Uptime
             char lineBuf[32];
-            snprintf(lineBuf, sizeof(lineBuf), "%s | %s", data.roleStr, data.statusStr);
+            uint32_t mm = (data.uptimeSec / 60) % 100;
+            uint32_t ss = data.uptimeSec % 60;
+            snprintf(lineBuf, sizeof(lineBuf), "%s [%c] %02lu:%02lu", 
+                     data.roleStr, data.heartbeatChar ? data.heartbeatChar : '*',
+                     (unsigned long)mm, (unsigned long)ss);
             _u8g2->drawStr(0, 10, lineBuf);
 
-            // Row 2 (y=24): Storage & Counters
-            snprintf(lineBuf, sizeof(lineBuf), "Bdl:%u TX:%u RX:%u", 
-                     data.storageCount, data.txSuccessCount, data.rxReadyCount);
-            _u8g2->drawStr(0, 24, lineBuf);
+            // Row 2 (y=23): Status & Storage Count
+            snprintf(lineBuf, sizeof(lineBuf), "ST:%-7s  Bdl:%u", 
+                     data.statusStr, data.storageCount);
+            _u8g2->drawStr(0, 23, lineBuf);
 
-            // Row 3 (y=38): Telemetry & Errors
-            snprintf(lineBuf, sizeof(lineBuf), "R:%d S:%d E:%u", 
-                     data.lastRssi, data.lastSnr, data.txFailureCount);
-            _u8g2->drawStr(0, 38, lineBuf);
+            // Row 3 (y=36): Packet Counters (TX, RX, ERR)
+            snprintf(lineBuf, sizeof(lineBuf), "TX:%-3u RX:%-3u E:%-2u", 
+                     data.txSuccessCount, data.rxReadyCount, data.txFailureCount);
+            _u8g2->drawStr(0, 36, lineBuf);
 
-            // Row 4 (y=52): App Message Viewer
-            if (data.lastMessage[0] != '\0') {
-                _u8g2->drawStr(0, 52, data.lastMessage);
+            // Row 4 (y=49): Radio Telemetry
+            snprintf(lineBuf, sizeof(lineBuf), "RSSI:%-4d SNR:%-2d", 
+                     data.lastRssi, data.lastSnr);
+            _u8g2->drawStr(0, 49, lineBuf);
+
+            // Row 5 (y=62): Last Action / Payload Message
+            if (data.hasNewMessage && data.lastMessage[0] != '\0') {
+                _u8g2->drawStr(0, 62, data.lastMessage);
+            } else if (data.lastActionStr[0] != '\0') {
+                _u8g2->drawStr(0, 62, data.lastActionStr);
             } else {
-                _u8g2->drawStr(0, 52, "Waiting for bundles...");
+                _u8g2->drawStr(0, 62, "Waiting for traffic");
             }
         } while (_u8g2->nextPage());
     }
