@@ -251,6 +251,17 @@ public:
     void setRoleString(const char* role);
 
     /**
+     * @brief Configures operational status string shown on row 2 (e.g. "BOOT", "ERR: FLASH").
+     */
+    void setStatusString(const char* status) {
+        if (status != nullptr) {
+            strncpy(_data.statusStr, status, sizeof(_data.statusStr) - 1);
+            _data.statusStr[sizeof(_data.statusStr) - 1] = '\0';
+            _isDirty = true;
+        }
+    }
+
+    /**
      * @brief Updates last recorded RF telemetry (RSSI / SNR).
      */
     void updateRfTelemetry(int16_t rssi, int8_t snr);

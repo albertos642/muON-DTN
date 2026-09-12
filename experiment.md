@@ -165,17 +165,42 @@ sudo make install
 sudo ldconfig
 ```
 
-### 5.2 USB Serial Port Permissions
-Connect Node B to the Linux PC using a microUSB cable. Identify the serial device:
+### 5.2 Configurazione Nome Seriale Persistente (Risoluzione Flapping ttyACM0 / ttyACM1)
+Su Linux, ogni disconnessione o riavvio del microcontroller CDC può causare l'incremento del nome del device (es. `/dev/ttyACM0` $\to$ `/dev/ttyACM1`). Per garantire un collegamento **100% stabile e persistente**, adottare una delle due seguenti soluzioni:
+
+#### Metodo A: Utilizzo del path univoco `by-id` (Consigliato, senza configurazioni di sistema)
+Linux crea automaticamente link simbolici immutabili legati all'identità hardware USB della scheda:
 ```bash
-ls -l /dev/ttyACM* /dev/ttyUSB*
+ls -l /dev/serial/by-id/
+# Esempio output:
+# usb-Adafruit_Feather_M0_... -> ../../ttyACM0
 ```
-Ensure your user has permission to read/write the serial port:
+È possibile avviare il gateway passando direttamente questo percorso (o con wildcard):
 ```bash
-sudo usermod -a -G dialout $USER
-# Apply temporary permissions if needed:
-sudo chmod 666 /dev/ttyACM0
+./start_gateway.sh /dev/serial/by-id/usb-Adafruit_Feather_M0* 115200
 ```
+
+#### Metodo B: Regola `udev` per Device Name Persistente (`/dev/ttyNodeB`)
+Per associare in modo permanente il Nodo B al nome `/dev/ttyNodeB` con permessi automatici:
+1. Creare la regola udev:
+   ```bash
+   sudo bash -c 'cat <<EOF > /etc/udev/rules.d/99-muon-nodeb.rules
+   SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", SYMLINK+="ttyNodeB", MODE="0666", GROUP="dialout"
+   EOF'
+   ```
+2. Ricaricare le regole udev:
+   ```bash
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   ```
+3. Verificare la creazione del link simbolico:
+   ```bash
+   ls -l /dev/ttyNodeB
+   # lrwxrwxrwx 1 root root 7 ... /dev/ttyNodeB -> ttyACM0
+   ```
+4. Assicurarsi che il proprio utente appartenga al gruppo `dialout`:
+   ```bash
+   sudo usermod -a -G dialout $USER
+   ```
 
 ### 5.3 Launching IONe Gateway
 Pre-configured scripts are located in `muON-DTN/configs/ione_gateway/`:
@@ -185,8 +210,9 @@ cd muON-DTN/configs/ione_gateway
 # Ensure executable permissions
 chmod +x *.sh
 
-# Start IONe Node 3 daemon
-./start_gateway.sh
+# Start IONe Node 3 daemon targeting persistent node:
+./start_gateway.sh /dev/ttyNodeB 115200
+# oppure: ./start_gateway.sh /dev/serial/by-id/usb-Adafruit_Feather_M0* 115200
 ```
 
 The startup script loads:

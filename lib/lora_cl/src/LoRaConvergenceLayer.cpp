@@ -208,12 +208,13 @@ void LoRaConvergenceLayer::sendNextSegment() {
 
 void LoRaConvergenceLayer::sendAck(uint8_t sessionId) {
     _ctrlBuffer[0] = makeControlWord(LORA_TYPE_ACK, 0, sessionId);
+    _ctrlBuffer[1] = 0x00; // 2-byte frame for SX1276 explicit header + CRC robustness
     _sendingControlFrame = true;
     _controlFrameStartTimeMs = getNowMs();
     MUON_LOG_STR("[LoRaCL] Sending BDL_XFER_ACK for Session ");
     MUON_LOG_U32(sessionId);
     MUON_LOG_LN("...");
-    _modem->transmitAsync(_ctrlBuffer, 1);
+    _modem->transmitAsync(_ctrlBuffer, 2);
 }
 
 void LoRaConvergenceLayer::sendRefuse(uint8_t sessionId, uint8_t reasonCode, uint8_t sc) {

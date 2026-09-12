@@ -71,7 +71,7 @@
     static void arduinoLogU32(uint32_t v) { Serial1.print(v); }
     static void arduinoLogI32(int32_t v) { Serial1.print(v); }
     static void arduinoLogFloat(float v, uint8_t d) { Serial1.print(v, d); }
-  #elif defined(CONFIG_MUON_NODE_ROLE_B) && defined(CONFIG_MUON_UART_COBS_ENABLED)
+  #elif defined(CONFIG_MUON_NODE_ROLE_B) && defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
     #define MUON_LOG(x)   do {} while (0)
     #define MUON_LOGLN(x) do {} while (0)
   #else
@@ -224,6 +224,7 @@ static muon::plugins::LedActuatorPlugin g_ledPlugin(
 );
 #endif
 
+#if defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
 // Stream adapter for Serial1 (Hardware UART) or Serial (USB CDC)
 static ArduinoStreamLink g_uartStream(Serial);
 static muon::uartcobs::UartCobsConvergenceLayer g_uartCl(
@@ -233,6 +234,7 @@ static muon::uartcobs::UartCobsConvergenceLayer g_uartCl(
     &g_storage,
     true
 );
+#endif
 
 // LoRa Modem (Adafruit Feather M0: CS=8, DIO0=3, RST=4)
 static muon::lora::RadioLibLoRaModem g_loraModem(
@@ -329,8 +331,15 @@ static void ClmTickTask(void *pvParameters) {
     uint16_t secondCounter = 0;
 
     while (true) {
-        if (g_loraInterruptPending || digitalRead(CONFIG_MUON_LORA_PIN_DIO0) == HIGH) {
+        bool irq = false;
+        taskENTER_CRITICAL();
+        if (g_loraInterruptPending) {
             g_loraInterruptPending = false;
+            irq = true;
+        }
+        taskEXIT_CRITICAL();
+
+        if (irq || digitalRead(CONFIG_MUON_LORA_PIN_DIO0) == HIGH) {
             g_loraModem.handleInterrupt();
         }
 
@@ -341,7 +350,7 @@ static void ClmTickTask(void *pvParameters) {
         g_clm.tickAll();
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-#if defined(CONFIG_MUON_UART_COBS_ENABLED)
+#if defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
         g_oledPlugin.setHostConnected(g_uartCl.isHostConnected());
 #endif
         g_oledPlugin.tick(millis());
@@ -381,6 +390,15 @@ void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, LOW);
 
+    // Deselect all SPI Chip Select pins BEFORE initializing any peripheral
+    // to prevent bus contention on MISO between SX1276 and SPI Flash
+    pinMode(CONFIG_MUON_LORA_PIN_CS, OUTPUT);
+    digitalWrite(CONFIG_MUON_LORA_PIN_CS, HIGH);
+#if defined(CONFIG_GGG_SPIFLASH_CS_PIN)
+    pinMode(CONFIG_GGG_SPIFLASH_CS_PIN, OUTPUT);
+    digitalWrite(CONFIG_GGG_SPIFLASH_CS_PIN, HIGH);
+#endif
+
 #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
     Serial1.begin(115200);
 #endif
@@ -388,7 +406,7 @@ void setup() {
     // Initialize USB Serial (non-blocking, battery safe)
     Serial.begin(115200);
 
-#if !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_ENABLED)
+#if !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
     // On Native USB CDC (Feather M0), wait up to 3000 ms for Serial Monitor to open.
     // If running on battery without PC, times out after 3s and proceeds safely.
     uint32_t startWait = millis();
@@ -402,7 +420,7 @@ void setup() {
 #if defined(CONFIG_MUON_DEBUG)
   #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
     muon::log::Logger::setSinks(arduinoLogStr, arduinoLogLn, arduinoLogU32, arduinoLogI32, arduinoLogFloat);
-  #elif !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_ENABLED)
+  #elif !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
     muon::log::Logger::setSinks(arduinoLogStr, arduinoLogLn, arduinoLogU32, arduinoLogI32, arduinoLogFloat);
   #endif
 #endif
@@ -430,10 +448,18 @@ void setup() {
             MUON_LOG(F("[Flash] W25Q JEDEC ID: 0x"));
             MUON_LOG(jedec);
             MUON_LOGLN(F(""));
+            if (jedec == 0x000000 || jedec == 0xFFFFFF) {
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+                g_oledPlugin.setStatusString("ERR: FLASH");
+#endif
+            }
         }
 #endif
     } else {
         MUON_LOGLN(F("[Storage] ERROR: Storage backend initialization failed!"));
+#if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
+        g_oledPlugin.setStatusString("ERR: STORAGE");
+#endif
     }
 
 #if defined(CONFIG_MUON_I2C_SHARED_BUS) && defined(ARDUINO) && !defined(TARGET_NATIVE)
@@ -503,22 +529,25 @@ void setup() {
 
     // 3. Register Convergence Layers
     g_loraCl.setTimeProvider(getArduinoMillis);
-#if defined(CONFIG_MUON_UART_COBS_ENABLED)
+#if defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
     g_uartCl.setTimeProvider(getArduinoMillis);
 #endif
     g_clm.registerAdapter(&g_loraCl);
+#if defined(CONFIG_MUON_UART_COBS_CL_ENABLED)
     g_clm.registerAdapter(&g_uartCl);
+#endif
     g_clm.init();
 
     // 4. Initialise Hardware Modem
-    pinMode(CONFIG_MUON_LORA_PIN_DIO0, INPUT);
-    attachInterrupt(digitalPinToInterrupt(CONFIG_MUON_LORA_PIN_DIO0), loraDio0ISR, RISING);
-
     if (g_loraCl.begin()) {
         MUON_LOGLN(F("[LoRa] SX1276 initialized successfully."));
     } else {
         MUON_LOGLN(F("[LoRa] ERROR: Failed to initialize SX1276 modem!"));
     }
+
+    // Attach DIO0 interrupt AFTER modem begin (modem begin calls pinMode which resets PMUXEN on SAMD21)
+    pinMode(CONFIG_MUON_LORA_PIN_DIO0, INPUT);
+    attachInterrupt(digitalPinToInterrupt(CONFIG_MUON_LORA_PIN_DIO0), loraDio0ISR, RISING);
 
     // 5. Create FreeRTOS Tasks
     xTaskCreate(

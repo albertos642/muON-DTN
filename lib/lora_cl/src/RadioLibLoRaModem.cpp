@@ -61,6 +61,9 @@ bool RadioLibLoRaModem::transmitAsync(const uint8_t* buffer, size_t length) {
     MUON_LOG_U32(_lastConfig.spreadingFactor);
     MUON_LOG_LN("");
 
+    _radio.standby();
+    _radio.finishTransmit();
+
     _currentAction = Action::TX_IN_PROGRESS;
     int state = _radio.startTransmit(const_cast<uint8_t*>(buffer), length);
     if (state != RADIOLIB_ERR_NONE) {
@@ -113,6 +116,7 @@ void RadioLibLoRaModem::handleInterrupt() {
         MUON_LOG_LN("[Radio] SX1276 DIO0 IRQ: TxDone (finishTransmit completed)");
         _callback->onTxDone();
     } else if (_currentAction == Action::RX_IN_PROGRESS) {
+        _currentAction = Action::IDLE;
         size_t len = _radio.getPacketLength();
         MUON_LOG_STR("[Radio] SX1276 DIO0 IRQ: RxDone, packet len=");
         MUON_LOG_U32(len);
