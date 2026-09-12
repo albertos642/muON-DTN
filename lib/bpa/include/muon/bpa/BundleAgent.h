@@ -106,6 +106,12 @@ public:
      */
     void tick();
 
+    /**
+     * @brief Consumes a locally delivered bundle by releasing its metadata and storage record.
+     * @param handle Storage handle of the delivered bundle.
+     */
+    void consumeDeliveredBundle(ggg::hal::StorageHandle_t handle);
+
     const IpnEndpointId& getLocalEid() const { return _localEid; }
     BundleMetadataTable& getMetadataTable() { return _metaTable; }
     const BundleMetadataTable& getMetadataTable() const { return _metaTable; }

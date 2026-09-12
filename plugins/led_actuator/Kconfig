@@ -1,0 +1,29 @@
+# @file Kconfig
+# @brief Configuration menu for muON LED Actuator Plugin.
+#
+# @author Alberto Soncini <alberto.soncini3@studio.unibo.it>
+# @author Supervisor: Carlo Caini <carlo.caini@unibo.it>
+# @copyright Copyright (c) 2026 Alma Mater Studiorum, University of Bologna.
+
+menuconfig MUON_PLUGIN_LED_ACTUATOR
+    bool "LED Actuator Plugin"
+    default y
+    help
+      Registers an application endpoint (service ID) for the Bundle Protocol Agent,
+      consumes delivered DTN bundles addressed to this service, and toggles a GPIO LED.
+
+if MUON_PLUGIN_LED_ACTUATOR
+
+    config MUON_ACTUATOR_PIN
+        int "Actuator LED GPIO Pin"
+        default 13
+        help
+          Pin connected to the LED or actuator (13 is LED_BUILTIN on Adafruit Feather M0).
+
+    config MUON_ACTUATOR_SERVICE_ID
+        int "Actuator DTN Application Service ID (IPN)"
+        default 2
+        help
+          The DTN service ID to which command bundles must be addressed (e.g. ipn:1.2).
+
+endif

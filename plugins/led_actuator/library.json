@@ -1,0 +1,14 @@
+{
+  "name": "muon_plugin_led_actuator",
+  "version": "0.1.0",
+  "description": "Lightweight LED Actuator and DTN Bundle Consumer Plugin for muON",
+  "keywords": ["dtn", "actuator", "led", "gpio"],
+  "authors": [
+    {
+      "name": "Alberto Soncini",
+      "email": "alberto.soncini3@studio.unibo.it"
+    }
+  ],
+  "frameworks": ["arduino"],
+  "platforms": ["atmelsam", "native"]
+}

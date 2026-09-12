@@ -254,6 +254,8 @@ void BundleAgent::handleRxReady(ggg::hal::StorageHandle_t bundleHandle) {
         delivEv.source = 0x01;
         delivEv.priority = header.getPriority();
         delivEv.payload.u32[0] = bundleHandle;
+        delivEv.payload.u32[1] = (static_cast<uint32_t>(header.destination.nodeNbr) << 16) |
+                                 (static_cast<uint32_t>(header.destination.serviceNbr) & 0xFFFF);
         ggg::system::SystemBus::getInstance().publish(delivEv);
     } else {
         // Forwarding or storing
@@ -305,6 +307,16 @@ void BundleAgent::tick() {
     if (_timeProvider != nullptr && _storage != nullptr) {
         uint32_t now = _timeProvider->getDtnTimestamp();
         _metaTable.purgeExpired(now, _storage);
+    }
+}
+
+void BundleAgent::consumeDeliveredBundle(ggg::hal::StorageHandle_t handle) {
+    if (handle == GGG_INVALID_HANDLE) {
+        return;
+    }
+    _metaTable.remove(handle);
+    if (_storage != nullptr) {
+        _storage->deleteRecord(handle);
     }
 }
 

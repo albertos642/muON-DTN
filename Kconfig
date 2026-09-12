@@ -115,6 +115,25 @@ menu "muON Application Plugins"
     orsource "plugins/*/Kconfig"
 endmenu
 
+menu "muON Debug & Diagnostics Settings"
+    config MUON_DEBUG
+        bool "Enable muON Debug Logging"
+        default y
+        help
+          Enables diagnostic logging via MUON_LOG / MUON_LOGLN.
+          Note: If Node B is configured with UART-COBS on Serial, logs are automatically silenced
+          on Serial to prevent binary frame corruption.
+
+    if MUON_DEBUG
+        config MUON_DEBUG_USE_SERIAL1
+            bool "Route Debug Logs to Hardware Serial1 (pins 0/1)"
+            default n
+            help
+              Sends debug messages to hardware UART Serial1 (TX on Pin 1), leaving Serial (USB)
+              uncontaminated for binary UARTCL-COBS frames.
+    endif
+endmenu
+
 # Include underlying GGG Core Framework configuration
 orsource "../ggg/Kconfig"
 

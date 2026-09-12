@@ -43,12 +43,14 @@ class MockEventListener : public ggg::system::IEventListener {
 public:
     uint16_t lastEventType = 0;
     uint32_t lastPayloadU32 = 0;
+    uint32_t lastPayloadU32_1 = 0;
     uint8_t lastPriority = 0;
     size_t eventCount = 0;
 
     void onEvent(const ggg::system::SystemEvent& event) override {
         lastEventType = event.type;
         lastPayloadU32 = event.payload.u32[0];
+        lastPayloadU32_1 = event.payload.u32[1];
         lastPriority = event.priority;
         eventCount++;
     }
@@ -56,6 +58,7 @@ public:
     void reset() {
         lastEventType = 0;
         lastPayloadU32 = 0;
+        lastPayloadU32_1 = 0;
         lastPriority = 0;
         eventCount = 0;
     }
@@ -404,7 +407,13 @@ void test_bundle_agent_rx_and_local_delivery(void) {
 
     TEST_ASSERT_EQUAL_UINT16(MUON_EVT_BUNDLE_DELIVERED, listener.lastEventType);
     TEST_ASSERT_EQUAL_UINT32(bundleHandle, listener.lastPayloadU32);
+    TEST_ASSERT_EQUAL_UINT32((5 << 16) | 1, listener.lastPayloadU32_1);
     TEST_ASSERT_NOT_NULL(agent.getMetadataTable().find(bundleHandle));
+
+    // Test consuming delivered bundle
+    agent.consumeDeliveredBundle(bundleHandle);
+    TEST_ASSERT_NULL(agent.getMetadataTable().find(bundleHandle));
+    TEST_ASSERT_EQUAL_size_t(0, storage.getSize(bundleHandle));
 }
 
 void test_bundle_agent_expired_rx_drop(void) {

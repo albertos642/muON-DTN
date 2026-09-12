@@ -30,6 +30,10 @@
 #include <muon/lora/RadioLibLoRaModem.h>
 #include <muon/uartcobs/UartCobsConvergenceLayer.h>
 
+#if defined(CONFIG_GGG_PLUGIN_BUTTON)
+#include <ggg/plugins/ButtonPlugin.h>
+#endif
+
 #if defined(CONFIG_MUON_PLUGIN_RTC_DS3231)
 #include <muon/plugins/RtcDs3231Plugin.h>
 #endif
@@ -42,6 +46,10 @@
 #include <muon/plugins/Bme280Plugin.h>
 #endif
 
+#if defined(CONFIG_MUON_PLUGIN_LED_ACTUATOR)
+#include <muon/plugins/LedActuatorPlugin.h>
+#endif
+
 #if defined(CONFIG_MUON_I2C_SHARED_BUS) && defined(ARDUINO) && !defined(TARGET_NATIVE)
 #include <Wire.h>
 #endif
@@ -49,7 +57,28 @@
 #include "autoconf.h"
 
 // ----------------------------------------------------------------------------
-// 1. Hardware Stream Adapter for Arduino Serial
+// 1. Diagnostic Logging Discipline
+// If Node B has UARTCL active on USB Serial, Serial.print is suppressed to protect
+// binary COBS frames. Diagnostic logs can optionally route to Serial1.
+// ----------------------------------------------------------------------------
+#if defined(CONFIG_MUON_DEBUG)
+  #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
+    #define MUON_LOG(x)   Serial1.print(x)
+    #define MUON_LOGLN(x) Serial1.println(x)
+  #elif defined(CONFIG_MUON_NODE_ROLE_B) && defined(CONFIG_MUON_UART_COBS_ENABLED)
+    #define MUON_LOG(x)   do {} while (0)
+    #define MUON_LOGLN(x) do {} while (0)
+  #else
+    #define MUON_LOG(x)   Serial.print(x)
+    #define MUON_LOGLN(x) Serial.println(x)
+  #endif
+#else
+  #define MUON_LOG(x)   do {} while (0)
+  #define MUON_LOGLN(x) do {} while (0)
+#endif
+
+// ----------------------------------------------------------------------------
+// 2. Hardware Stream Adapter for Arduino Serial
 // ----------------------------------------------------------------------------
 class ArduinoStreamLink : public ggg::hal::IInputStream, public ggg::hal::IOutputStream {
 private:
@@ -70,7 +99,7 @@ public:
     }
 
     size_t available() override {
-        return (size_t)_stream.available();
+        return static_cast<size_t>(_stream.available());
     }
 
     int read() override {
@@ -85,7 +114,7 @@ public:
 };
 
 // ----------------------------------------------------------------------------
-// 2. Static Memory Infrastructure (Zero-Malloc)
+// 3. Static Memory Infrastructure (Zero-Malloc)
 // ----------------------------------------------------------------------------
 #if defined(CONFIG_MUON_STORAGE_BACKEND_SPI_FLASH) || defined(CONFIG_GGG_STORAGE_FLASH_SPI)
 static ggg::plugins::SpiFlashStorage g_storage;
@@ -106,7 +135,7 @@ static muon::bpa::ITimeProvider* g_timeProvider = &g_rtcPlugin;
 class ArduinoTimeProvider : public muon::bpa::ITimeProvider {
 public:
     uint32_t getDtnTimestamp() const override {
-        return (uint32_t)(millis() / 1000);
+        return static_cast<uint32_t>(millis() / 1000);
     }
 };
 static ArduinoTimeProvider g_defaultTimeProvider;
@@ -153,6 +182,30 @@ static muon::plugins::Bme280Plugin g_bmePlugin(
 );
 #endif
 
+#if defined(CONFIG_GGG_PLUGIN_BUTTON)
+static ggg::plugins::ButtonConfig g_buttonConfig = {
+    .pin = static_cast<uint32_t>(CONFIG_GGG_BUTTON_PIN),
+    .pullMode = ggg::plugins::ButtonPullMode::PULL_UP,
+    .activeLow = true,
+    .activeEdge = ggg::plugins::ButtonActiveEdge::EDGE_FALLING,
+    .sampleIntervalMs = 5,
+    .debounceThreshold = 6,
+    .eventId = CONFIG_GGG_BUTTON_EVENT_ID,
+    .eventCode = CONFIG_GGG_BUTTON_EVENT_CODE,
+    .moduleId = 0x01
+};
+static ggg::plugins::ButtonPlugin g_buttonPlugin(g_buttonConfig);
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_LED_ACTUATOR)
+static muon::plugins::LedActuatorPlugin g_ledPlugin(
+    CONFIG_MUON_ACTUATOR_PIN,
+    CONFIG_MUON_ACTUATOR_SERVICE_ID,
+    &g_bundleAgent,
+    &g_storage
+);
+#endif
+
 // Stream adapter for Serial1 (Hardware UART) or Serial (USB CDC)
 static ArduinoStreamLink g_uartStream(Serial);
 static muon::uartcobs::UartCobsConvergenceLayer g_uartCl(
@@ -171,11 +224,11 @@ static muon::lora::RadioLibLoRaModem g_loraModem(
 );
 
 static muon::lora::LoRaConfig g_loraConfig = {
-    (float)CONFIG_MUON_LORA_FREQ_MHZ,
-    (uint8_t)CONFIG_MUON_LORA_SF,
-    (float)CONFIG_MUON_LORA_BW_KHZ,
-    (uint8_t)CONFIG_MUON_LORA_CR,
-    (int8_t)CONFIG_MUON_LORA_TX_POWER_DBM,
+    static_cast<float>(CONFIG_MUON_LORA_FREQ_MHZ),
+    static_cast<uint8_t>(CONFIG_MUON_LORA_SF),
+    static_cast<float>(CONFIG_MUON_LORA_BW_KHZ),
+    static_cast<uint8_t>(CONFIG_MUON_LORA_CR),
+    static_cast<int8_t>(CONFIG_MUON_LORA_TX_POWER_DBM),
     0x12, // Sync Word for private DTN network
     8     // Preamble length
 };
@@ -190,9 +243,11 @@ static muon::lora::LoRaConvergenceLayer g_loraCl(
     CONFIG_MUON_LORA_ACK_TIMEOUT_MS
 );
 
-// DIO0 ISR
+// Deferred interrupt flag for thread-safe DIO0 servicing in task context
+static volatile bool g_loraInterruptPending = false;
+
 static void loraDio0ISR() {
-    g_loraModem.handleInterrupt();
+    g_loraInterruptPending = true;
 }
 
 static uint32_t getArduinoMillis() {
@@ -200,39 +255,23 @@ static uint32_t getArduinoMillis() {
 }
 
 // ----------------------------------------------------------------------------
-// 3. Application Listener: Displays DTN status and toggles LED
+// 4. Application Listener: Displays DTN status and updates OLED telemetry
 // ----------------------------------------------------------------------------
 class AppEventListener : public ggg::system::IEventListener {
 public:
     void onEvent(const ggg::system::SystemEvent& event) override {
         if (event.type == muon::events::MUON_EVT_RX_READY) {
-            digitalWrite(LED_BUILTIN, HIGH);
-            ggg::hal::StorageHandle_t h = (ggg::hal::StorageHandle_t)event.payload.u32[0];
-            size_t sz = g_storage.getSize(h);
-            Serial.print(F("[muON] Received Bundle Handle: "));
-            Serial.print(h);
-            Serial.print(F(" ("));
-            Serial.print(sz);
-            Serial.println(F(" bytes)"));
-
-            // Read payload and print to Serial
-            char buf[64];
-            size_t toRead = sz < sizeof(buf) - 1 ? sz : sizeof(buf) - 1;
-            g_storage.readData(h, 0, (uint8_t*)buf, toRead);
-            buf[toRead] = '\0';
-            Serial.print(F("[muON] Payload: "));
-            Serial.println(buf);
-
-            delay(50);
-            digitalWrite(LED_BUILTIN, LOW);
+            MUON_LOG(F("[muON] Received Bundle Handle: "));
+            MUON_LOGLN(event.payload.u32[0]);
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
-            g_oledPlugin.updateRfTelemetry((int16_t)g_loraModem.getRSSI(), (int8_t)g_loraModem.getSNR());
+            g_oledPlugin.updateRfTelemetry(static_cast<int16_t>(g_loraModem.getRSSI()),
+                                           static_cast<int8_t>(g_loraModem.getSNR()));
 #endif
         } else if (event.type == muon::events::MUON_EVT_TX_SUCCESS) {
-            Serial.println(F("[muON] TX Success"));
+            MUON_LOGLN(F("[muON] TX Success"));
         } else if (event.type == muon::events::MUON_EVT_TX_FAILURE) {
-            Serial.println(F("[muON] TX Failure (NACK/Timeout)"));
+            MUON_LOGLN(F("[muON] TX Failure (NACK/Timeout)"));
         }
     }
 };
@@ -240,7 +279,7 @@ public:
 static AppEventListener g_appListener;
 
 // ----------------------------------------------------------------------------
-// 4. FreeRTOS Tasks
+// 5. FreeRTOS Tasks
 // ----------------------------------------------------------------------------
 static void SystemBusTask(void *pvParameters) {
     (void)pvParameters;
@@ -251,69 +290,52 @@ static void ClmTickTask(void *pvParameters) {
     (void)pvParameters;
     TickType_t xLastWakeTime = xTaskGetTickCount();
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // 100 Hz polling
+    uint16_t secondCounter = 0;
 
     while (true) {
+        if (g_loraInterruptPending) {
+            g_loraInterruptPending = false;
+            g_loraModem.handleInterrupt();
+        }
+
         g_clm.tickAll();
+
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
         g_oledPlugin.tick(millis());
 #endif
+
+        secondCounter++;
+        if (secondCounter >= 100) {
+            secondCounter = 0;
+            g_bundleAgent.tick();
+        }
+
         vTaskDelayUntil(&xLastWakeTime, xFrequency);
     }
 }
 
 static void AppTask(void *pvParameters) {
     (void)pvParameters;
-
-#if defined(CONFIG_MUON_NODE_ROLE_A)
-    // Node A (Sensor Source): Transmits periodic telemetry bundle every 10 seconds
-    uint32_t counter = 0;
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-        counter++;
-
-        Serial.print(F("[Node A] Generating Telemetry Bundle #"));
-        Serial.println(counter);
-
-        digitalWrite(LED_BUILTIN, HIGH);
-
-        char jsonPayload[64];
-        snprintf(jsonPayload, sizeof(jsonPayload), "{\"node\":1,\"seq\":%lu,\"status\":\"OK\"}", (unsigned long)counter);
-
-        ggg::hal::StorageHandle_t h = g_storage.beginWrite();
-        if (h != GGG_INVALID_HANDLE) {
-            g_storage.writeData(h, (const uint8_t*)jsonPayload, strlen(jsonPayload));
-            g_storage.commitWrite(h);
-
-            // Forward directly over LoRa (Link 0) with Notified QoS (1)
-            g_clm.transmit(CONFIG_MUON_LORA_LINK_ID, h, 1);
-        }
-
-        vTaskDelay(pdMS_TO_TICKS(100));
-        digitalWrite(LED_BUILTIN, LOW);
-    }
-#else
-    // Node B (Gateway / Echo): Stays in listen mode
-    Serial.println(F("[Node B] Listening for incoming LoRa DTN bundles..."));
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
-#endif
 }
 
 // ----------------------------------------------------------------------------
-// 5. System Setup
+// 6. System Setup
 // ----------------------------------------------------------------------------
 void setup() {
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LOW);
+#if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
+    Serial1.begin(115200);
+#endif
 
+    // Initialize USB Serial (non-blocking, battery safe)
     Serial.begin(115200);
-    // Short wait for serial console if connected
-    delay(1000);
+    delay(200);
 
-    Serial.println(F("=========================================="));
-    Serial.println(F(" muON-DTN: Micro Interplanetary Overlay   "));
-    Serial.println(F("=========================================="));
+    MUON_LOGLN(F("=========================================="));
+    MUON_LOGLN(F(" muON-DTN: Micro Interplanetary Overlay   "));
+    MUON_LOGLN(F("=========================================="));
 
     // 1. Initialise SystemBus and Storage
     ggg::system::SystemBus::getInstance().init();
@@ -329,9 +351,9 @@ void setup() {
 
 #if defined(CONFIG_MUON_PLUGIN_RTC_DS3231)
     if (g_rtcPlugin.begin()) {
-        Serial.println(F("[RTC] DS3231 initialized successfully."));
+        MUON_LOGLN(F("[RTC] DS3231 initialized successfully."));
     } else {
-        Serial.println(F("[RTC] WARNING: DS3231 not detected on I2C bus."));
+        MUON_LOGLN(F("[RTC] WARNING: DS3231 not detected on I2C bus."));
     }
 #endif
 
@@ -342,22 +364,46 @@ void setup() {
     g_oledPlugin.setRoleString("Node B (2.1)");
 #endif
     if (g_oledPlugin.begin()) {
-        Serial.println(F("[OLED] Display initialized successfully."));
+        MUON_LOGLN(F("[OLED] Display initialized successfully."));
     }
 #endif
 
 #if defined(CONFIG_MUON_PLUGIN_SENSOR_BME280)
     if (g_bmePlugin.begin()) {
-        Serial.println(F("[BME280] Sensor initialized in forced mode."));
+        MUON_LOGLN(F("[BME280] Sensor initialized in forced mode."));
     } else {
-        Serial.println(F("[BME280] WARNING: BME280 not detected on I2C bus."));
+        MUON_LOGLN(F("[BME280] WARNING: BME280 not detected on I2C bus."));
     }
 #endif
 
-    // 2. Initialise Network Routing
-    g_router.setLocalEndpoint(muon::bpa::IpnEndpointId{CONFIG_MUON_LOCAL_NODE_ID, 1});
-    g_router.addRoute(CONFIG_MUON_REMOTE_NODE_ID, CONFIG_MUON_LORA_LINK_ID);
+#if defined(CONFIG_GGG_PLUGIN_BUTTON)
+    if (g_buttonPlugin.begin()) {
+        MUON_LOGLN(F("[Button] Pushbutton plugin active."));
+    }
+#endif
+
+#if defined(CONFIG_MUON_PLUGIN_LED_ACTUATOR)
+    if (g_ledPlugin.begin()) {
+        MUON_LOGLN(F("[Actuator] LED Actuator plugin registered."));
+    }
+#endif
+
+    // 2. Initialise Network Routing and BPA
+#if defined(CONFIG_MUON_NODE_ROLE_A)
+    // Node A (1.1): all traffic for Node 2 or Node 3 routes via LoRaCL
+    g_router.setLocalEndpoint(muon::bpa::IpnEndpointId{1, 1});
+    g_router.addRoute(2, CONFIG_MUON_LORA_LINK_ID);
+    g_router.addRoute(3, CONFIG_MUON_LORA_LINK_ID);
+    g_router.setDefaultRoute(CONFIG_MUON_LORA_LINK_ID);
+#else
+    // Node B (2.1): traffic for Node 1 routes via LoRaCL; traffic for Node 3 (PC) routes via UARTCL
+    g_router.setLocalEndpoint(muon::bpa::IpnEndpointId{2, 1});
+    g_router.addRoute(1, CONFIG_MUON_LORA_LINK_ID);
+    g_router.addRoute(3, CONFIG_MUON_UART_COBS_LINK_ID);
     g_router.setDefaultRoute(CONFIG_MUON_UART_COBS_LINK_ID);
+#endif
+
+    g_bundleAgent.init(g_router.getLocalEndpoint());
 
     // 3. Register Convergence Layers
     g_loraCl.setTimeProvider(getArduinoMillis);
@@ -370,9 +416,9 @@ void setup() {
     attachInterrupt(digitalPinToInterrupt(CONFIG_MUON_LORA_PIN_DIO0), loraDio0ISR, RISING);
 
     if (g_loraCl.begin()) {
-        Serial.println(F("[LoRa] SX1276 initialized successfully."));
+        MUON_LOGLN(F("[LoRa] SX1276 initialized successfully."));
     } else {
-        Serial.println(F("[LoRa] ERROR: Failed to initialize SX1276 modem!"));
+        MUON_LOGLN(F("[LoRa] ERROR: Failed to initialize SX1276 modem!"));
     }
 
     // 5. Create FreeRTOS Tasks
@@ -397,7 +443,7 @@ void setup() {
     xTaskCreate(
         AppTask,
         "AppTask",
-        512,
+        256,
         nullptr,
         1,
         nullptr
@@ -410,7 +456,7 @@ void setup() {
     ev.priority = 255;
     ggg::system::SystemBus::getInstance().publish(ev);
 
-    Serial.println(F("[RTOS] Starting FreeRTOS Scheduler..."));
+    MUON_LOGLN(F("[RTOS] Starting FreeRTOS Scheduler..."));
     vTaskStartScheduler();
 }
 

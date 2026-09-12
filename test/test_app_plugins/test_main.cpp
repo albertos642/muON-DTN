@@ -14,6 +14,7 @@
 #include <muon/plugins/OledDisplayPlugin.h>
 #include <muon/plugins/Bme280Plugin.h>
 #include <muon/plugins/RtcDs3231Plugin.h>
+#include <muon/plugins/LedActuatorPlugin.h>
 
 #include <muon/bpa/BundleAgent.h>
 #include <muon/bpa/StorageStream.h>
@@ -347,6 +348,114 @@ void test_rtc_ds3231_ingress_bundle_sync_fallback() {
 }
 
 // ============================================================================
+// 4. LED Actuator Plugin Tests
+// ============================================================================
+void test_led_actuator_lifecycle() {
+    RamStorage storage;
+    MockSimpleTime timeProv;
+    BundleAgent agent(&storage, &timeProv, nullptr);
+    LedActuatorPlugin actuator(13, 2, &agent, &storage);
+
+    TEST_ASSERT_EQUAL_UINT8(13, actuator.getPin());
+    TEST_ASSERT_EQUAL_UINT16(2, actuator.getServiceId());
+    TEST_ASSERT_FALSE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(0, actuator.getToggleCount());
+
+    TEST_ASSERT_TRUE(actuator.begin());
+
+    actuator.toggle();
+    TEST_ASSERT_TRUE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(1, actuator.getToggleCount());
+
+    actuator.toggle();
+    TEST_ASSERT_FALSE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(2, actuator.getToggleCount());
+
+    actuator.end();
+}
+
+void test_led_actuator_dtn_delivery_and_consumption() {
+    RamStorage storage;
+    MockSimpleTime timeProv;
+    StaticRoutingEngine router;
+    BundleAgent agent(&storage, &timeProv, &router);
+    agent.init({ 1, 1 }); // Local is node 1
+
+    LedActuatorPlugin actuator(13, 2, &agent, &storage);
+    TEST_ASSERT_TRUE(actuator.begin());
+
+    // 1. Create a bundle destined for service 99 (different service)
+    BundleHeader hdr1;
+    hdr1.version = 7;
+    hdr1.destination = { 1, 99 }; // destNode=1, service=99
+    hdr1.source = { 3, 1 };
+    hdr1.reportTo = { 3, 1 };
+    hdr1.creationTimestamp = 1750000000;
+    hdr1.lifetime = 3600;
+
+    StorageOutputStream outStream1(storage, 64);
+    TEST_ASSERT_TRUE(CBORSerializer::serializeBundle(hdr1, (const uint8_t*)"CMD", 3, outStream1));
+    StorageHandle_t h1 = outStream1.commit();
+
+    // Trigger arrival at BPA
+    SystemEvent rxEv1 = {};
+    rxEv1.type = MUON_EVT_RX_READY;
+    rxEv1.payload.u32[0] = h1;
+    SystemBus::getInstance().publish(rxEv1);
+    SystemBus::getInstance().dispatchOne(); // BPA processes RX_READY and publishes BUNDLE_DELIVERED
+    SystemBus::getInstance().dispatchOne(); // Actuator handles BUNDLE_DELIVERED
+
+    // Mismatched service: actuator should NOT toggle, bundle should remain in storage
+    TEST_ASSERT_FALSE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(0, actuator.getToggleCount());
+    TEST_ASSERT_GREATER_THAN(0, storage.getSize(h1));
+
+    // 2. Create a bundle destined for service 2 (LedActuator service)
+    BundleHeader hdr2;
+    hdr2.version = 7;
+    hdr2.destination = { 1, 2 }; // destNode=1, service=2
+    hdr2.source = { 3, 1 };
+    hdr2.reportTo = { 3, 1 };
+    hdr2.creationTimestamp = 1750000000;
+    hdr2.lifetime = 3600;
+
+    StorageOutputStream outStream2(storage, 64);
+    TEST_ASSERT_TRUE(CBORSerializer::serializeBundle(hdr2, (const uint8_t*)"TOGGLE", 6, outStream2));
+    StorageHandle_t h2 = outStream2.commit();
+
+    SystemEvent rxEv2 = {};
+    rxEv2.type = MUON_EVT_RX_READY;
+    rxEv2.payload.u32[0] = h2;
+    SystemBus::getInstance().publish(rxEv2);
+    SystemBus::getInstance().dispatchOne(); // BPA publishes BUNDLE_DELIVERED
+    SystemBus::getInstance().dispatchOne(); // Actuator receives BUNDLE_DELIVERED
+
+    // Matched service: actuator toggles to TRUE, and consumes bundle (clears from storage and BPA)
+    TEST_ASSERT_TRUE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(1, actuator.getToggleCount());
+    TEST_ASSERT_EQUAL_size_t(0, storage.getSize(h2));
+    TEST_ASSERT_NULL(agent.getMetadataTable().find(h2));
+
+    // 3. Second bundle to service 2 toggles state back to FALSE
+    StorageOutputStream outStream3(storage, 64);
+    TEST_ASSERT_TRUE(CBORSerializer::serializeBundle(hdr2, (const uint8_t*)"TOGGLE", 6, outStream3));
+    StorageHandle_t h3 = outStream3.commit();
+
+    SystemEvent rxEv3 = {};
+    rxEv3.type = MUON_EVT_RX_READY;
+    rxEv3.payload.u32[0] = h3;
+    SystemBus::getInstance().publish(rxEv3);
+    SystemBus::getInstance().dispatchOne();
+    SystemBus::getInstance().dispatchOne();
+
+    TEST_ASSERT_FALSE(actuator.getState());
+    TEST_ASSERT_EQUAL_UINT32(2, actuator.getToggleCount());
+    TEST_ASSERT_EQUAL_size_t(0, storage.getSize(h3));
+
+    actuator.end();
+}
+
+// ============================================================================
 // Main Unity Test Runner
 // ============================================================================
 int main(int argc, char **argv) {
@@ -369,6 +478,10 @@ int main(int argc, char **argv) {
     RUN_TEST(test_rtc_ds3231_initialization_and_time_provider);
     RUN_TEST(test_rtc_ds3231_time_sync_event);
     RUN_TEST(test_rtc_ds3231_ingress_bundle_sync_fallback);
+
+    // 4. LED Actuator Plugin
+    RUN_TEST(test_led_actuator_lifecycle);
+    RUN_TEST(test_led_actuator_dtn_delivery_and_consumption);
 
     return UNITY_END();
 }

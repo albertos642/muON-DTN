@@ -237,6 +237,7 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
             ev.payload.u32[0] = _txBundleHandle;
             ggg::system::SystemBus::getInstance().publish(ev);
         }
+        _modem->startReceive();
         return;
     }
 
@@ -250,11 +251,13 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
             ev.payload.u32[0] = _txBundleHandle;
             ggg::system::SystemBus::getInstance().publish(ev);
         }
+        _modem->startReceive();
         return;
     }
 
     if (type == LORA_TYPE_SEGMENT) {
         if (rLen < 3) {
+            _modem->startReceive();
             return;
         }
 
@@ -320,6 +323,10 @@ void LoRaConvergenceLayer::onRxDone(size_t length) {
                 ggg::system::SystemBus::getInstance().publish(ev);
             }
         }
+    }
+
+    if (!_sendingControlFrame && _txState != TxState::SENDING_SEGMENT) {
+        _modem->startReceive();
     }
 }
 
