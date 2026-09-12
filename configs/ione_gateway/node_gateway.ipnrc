@@ -1,5 +1,8 @@
 # node_gateway.ipnrc
 # IPN Static Routing for IONe Gateway Node 3
 
-# Egress plan for Node 1 (muON-DTN MCU): route over uartcobs outduct
+# Egress plan for Node 1 (muON Node A): route over uartcobs outduct via Node 2
 a plan 1 uartcobs//dev/ttyUSB0:115200
+
+# Egress plan for Node 2 (muON Node B Gateway MCU): route over uartcobs outduct
+a plan 2 uartcobs//dev/ttyUSB0:115200

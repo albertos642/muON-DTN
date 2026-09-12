@@ -552,6 +552,10 @@ void test_bundle_egress_muon_to_ione(void) {
     size_t bundleBytesLen = decodedLen - 3;
     uint8_t* bundleBytes = ionDecoded + 1;
 
+    // RFC 9171 Section 4.1 verification: Bundle must be encoded as an indefinite array (0x9F ... 0xFF)
+    TEST_ASSERT_EQUAL_HEX8(0x9F, bundleBytes[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xFF, bundleBytes[bundleBytesLen - 1]);
+
     // Verify bundle is valid CBOR
     muon::bpa::MemoryInputStream cborIn(bundleBytes, bundleBytesLen);
     muon::bpa::BundleHeader hdr;

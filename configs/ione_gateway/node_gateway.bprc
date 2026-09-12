@@ -17,3 +17,6 @@ a induct uartcobs /dev/ttyUSB0:115200 'uartcobscli /dev/ttyUSB0:115200'
 a outduct uartcobs /dev/ttyUSB0:115200 'uartcobsclo /dev/ttyUSB0:115200'
 
 s
+
+# Enable BP activity watching (watch characters: a=acquired, d=delivered, e=expired, z=discarded, y=refused)
+w 1

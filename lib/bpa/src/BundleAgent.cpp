@@ -255,16 +255,85 @@ void BundleAgent::handleRxReady(ggg::hal::StorageHandle_t bundleHandle) {
     MUON_LOG_U32(payloadLength);
     MUON_LOG_LN(" B");
 
-    // Check bundle expiration (RFC 9171 Section 4.2.5.1: creation timestamp 0 indicates unknown time and must never expire)
+    // Evaluate delivery or forwarding
+    bool deliverLocal = (header.destination == _localEid);
+    if (!deliverLocal && _router != nullptr) {
+        uint8_t linkId = 0;
+        routing::RouteDecision decision = _router->evaluate(header, linkId);
+        if (decision == routing::RouteDecision::DELIVER_LOCAL) {
+            deliverLocal = true;
+        } else if (decision == routing::RouteDecision::DROP) {
+            MUON_LOG_STR("[BPA] Router requested DROP for Handle ");
+            MUON_LOG_U32(bundleHandle);
+            MUON_LOG_LN("");
+            _storage->deleteRecord(bundleHandle);
+            return;
+        }
+    }
+
+    // Evaluate timestamp harmonization for forwarded bundles from uncalibrated/skewed IoT nodes
     uint32_t now = _timeProvider->getDtnTimestamp();
     bool isExpired = false;
-    if (header.creationTimestamp > 0 && header.lifetime > 0) {
-        // Only evaluate expiration if both clocks operate in compatible epochs
-        bool bothEpoch = (now >= 1000000UL && header.creationTimestamp >= 1000000UL);
-        bool bothUptime = (now < 1000000UL && header.creationTimestamp < 1000000UL);
-        if (bothEpoch || bothUptime) {
-            if (now > (header.creationTimestamp + header.lifetime)) {
-                isExpired = true;
+
+    if (!deliverLocal) {
+        bool hasAuthoritativeClock = (_timeProvider->isAuthoritative() || now >= 1000000UL);
+        bool needsHarmonization = false;
+
+        if (hasAuthoritativeClock) {
+            if (header.creationTimestamp == 0 || header.creationTimestamp < 1000000UL) {
+                needsHarmonization = true;
+            } else if (now > (header.creationTimestamp + header.lifetime)) {
+                // Sensor node clock skewed or expired relative to authoritative gateway
+                needsHarmonization = true;
+            }
+        }
+
+        if (needsHarmonization) {
+            MUON_LOG_STR("[BPA] Harmonizing IoT timestamp for Handle ");
+            MUON_LOG_U32(bundleHandle);
+            MUON_LOG_STR(" (Old TS: ");
+            MUON_LOG_U32(header.creationTimestamp);
+            MUON_LOG_STR(" -> New TS: ");
+            MUON_LOG_U32(now);
+            MUON_LOG_LN(")");
+
+            header.creationTimestamp = now;
+            if (header.lifetime < 60) {
+                header.lifetime = 3600;
+            }
+
+            StorageOutputStream outStream(*_storage, payloadLength + 64);
+            if (outStream.isValid()) {
+                if (CBORSerializer::reserializeBundleWithNewHeader(header, inStream, payloadLength, outStream)) {
+                    ggg::hal::StorageHandle_t newHandle = outStream.commit();
+                    if (newHandle != GGG_INVALID_HANDLE) {
+                        _storage->deleteRecord(bundleHandle);
+                        bundleHandle = newHandle;
+                    } else {
+                        outStream.abort();
+                    }
+                } else {
+                    outStream.abort();
+                }
+            }
+        } else if (header.creationTimestamp > 0 && header.lifetime > 0) {
+            bool bothEpoch = (now >= 1000000UL && header.creationTimestamp >= 1000000UL);
+            bool bothUptime = (now < 1000000UL && header.creationTimestamp < 1000000UL);
+            if (bothEpoch || bothUptime) {
+                if (now > (header.creationTimestamp + header.lifetime)) {
+                    isExpired = true;
+                }
+            }
+        }
+    } else {
+        // Local destination: evaluate expiration standard
+        if (header.creationTimestamp > 0 && header.lifetime > 0) {
+            bool bothEpoch = (now >= 1000000UL && header.creationTimestamp >= 1000000UL);
+            bool bothUptime = (now < 1000000UL && header.creationTimestamp < 1000000UL);
+            if (bothEpoch || bothUptime) {
+                if (now > (header.creationTimestamp + header.lifetime)) {
+                    isExpired = true;
+                }
             }
         }
     }
@@ -295,23 +364,6 @@ void BundleAgent::handleRxReady(ggg::hal::StorageHandle_t bundleHandle) {
     meta.localDynamicPriority = 0;
 
     _metaTable.add(meta);
-
-    // Evaluate delivery or forwarding
-    bool deliverLocal = (header.destination == _localEid);
-    if (!deliverLocal && _router != nullptr) {
-        uint8_t linkId = 0;
-        routing::RouteDecision decision = _router->evaluate(header, linkId);
-        if (decision == routing::RouteDecision::DELIVER_LOCAL) {
-            deliverLocal = true;
-        } else if (decision == routing::RouteDecision::DROP) {
-            MUON_LOG_STR("[BPA] Router requested DROP for Handle ");
-            MUON_LOG_U32(bundleHandle);
-            MUON_LOG_LN("");
-            _metaTable.remove(bundleHandle);
-            _storage->deleteRecord(bundleHandle);
-            return;
-        }
-    }
 
     if (deliverLocal) {
         MUON_LOG_STR("[BPA] Delivering Bundle Handle ");

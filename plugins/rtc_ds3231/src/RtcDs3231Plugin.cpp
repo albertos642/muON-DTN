@@ -30,12 +30,12 @@ static const uint8_t daysInMonth[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31,
 
 uint32_t RtcDs3231Plugin::dateTimeToEpoch(uint16_t year, uint8_t month, uint8_t day,
                                          uint8_t hour, uint8_t minute, uint8_t second) {
-    if (year < 1970 || month < 1 || month > 12 || day < 1 || day > 31) {
+    if (year < 2000 || month < 1 || month > 12 || day < 1 || day > 31) {
         return 0;
     }
 
     uint32_t days = 0;
-    for (uint16_t y = 1970; y < year; ++y) {
+    for (uint16_t y = 2000; y < year; ++y) {
         days += isLeapYear(y) ? 366 : 365;
     }
 
@@ -65,7 +65,7 @@ void RtcDs3231Plugin::epochToDateTime(uint32_t epoch, uint16_t& year, uint8_t& m
     hour = epoch % 24;
     uint32_t days = epoch / 24;
 
-    year = 1970;
+    year = 2000;
     while (true) {
         uint16_t dInY = isLeapYear(year) ? 366 : 365;
         if (days >= dInY) {

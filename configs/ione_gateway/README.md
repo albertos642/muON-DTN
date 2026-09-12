@@ -116,9 +116,59 @@ muON microcontrollers can query IONe for network time:
 
 ---
 
-## 7. Stopping the Gateway
+## 7. Persistent Serial Port Device Names (udev rule)
+
+To prevent device node renumbering (e.g. `/dev/ttyACM0` jumping to `/dev/ttyACM1` upon MCU reboot), create a persistent symlink based on the USB serial or vendor/product ID:
+
+1. Identify your microcontroller's USB attributes:
+   ```bash
+   udevadm info -a -n /dev/ttyACM0 | grep -E "idVendor|idProduct|serial" | head -n 3
+   ```
+   *(For Adafruit Feather M0: `idVendor="239a"`, `idProduct="800b"`)*
+
+2. Create a udev rule in `/etc/udev/rules.d/99-muon-node.rules`:
+   ```bash
+   sudo bash -c 'cat << "EOF" > /etc/udev/rules.d/99-muon-node.rules
+   SUBSYSTEM=="tty", ATTRS{idVendor}=="239a", ATTRS{idProduct}=="800b", SYMLINK+="muon_node_b", MODE="0666"
+   EOF'
+   ```
+
+3. Reload udev rules:
+   ```bash
+   sudo udevadm control --reload-rules && sudo udevadm trigger
+   ```
+
+4. You can now reliably launch the gateway with:
+   ```bash
+   ./start_gateway.sh /dev/muon_node_b 115200
+   ```
+
+---
+
+## 8. Live Diagnostics & Activity Watching
+
+The gateway configuration enables real-time BP activity watching (`w 1` in `node_gateway.bprc`).
+
+To inspect ION activity live while bundles are being transferred:
+```bash
+tail -f ion.log
+```
+
+### Watch Characters Legend:
+- `a`: **Bundle Acquired** — bundle successfully received and validated by induct `uartcobscli`.
+- `d`: **Bundle Delivered** — bundle delivered to local endpoint (e.g. `ipn:3.1` sink).
+- `b`: **Bundle Queued** — bundle enqueued for transmission on an outduct.
+- `c`: **Bundle Transmitted** — bundle successfully transmitted over outduct.
+- `e`: **Bundle Expired** — bundle discarded because its expiration time was reached.
+- `y`: **Bundle Refused** — bundle rejected by admission control.
+- `z`: **Bundle Discarded** — bundle discarded due to storage or malformation.
+
+---
+
+## 9. Stopping the Gateway
 
 To cleanly terminate all ION daemons and release shared memory resources:
 ```bash
 ./stop_gateway.sh
 ```
+

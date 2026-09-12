@@ -27,6 +27,13 @@ public:
      * @brief Returns current DTN timestamp in seconds.
      */
     virtual uint32_t getDtnTimestamp() const = 0;
+
+    /**
+     * @brief Checks if time authority has an accurate/calibrated time reference.
+     */
+    virtual bool isAuthoritative() const {
+        return false;
+    }
 };
 
 } // namespace bpa

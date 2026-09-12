@@ -260,10 +260,9 @@ void test_bme280_plugin_ignore_mismatched_trigger_code() {
 // 3. RTC DS3231 Plugin Tests
 // ============================================================================
 void test_rtc_ds3231_datetime_conversions() {
-    // Known timestamp: 2026-09-11 12:30:45 UTC
-    // Days from 1970 to 2026: 20677 days.
+    // Known timestamp: 2026-09-11 12:30:45 UTC in DTN Epoch (seconds since 2000-01-01)
     uint32_t epoch = RtcDs3231Plugin::dateTimeToEpoch(2026, 9, 11, 12, 30, 45);
-    TEST_ASSERT_GREATER_THAN(1700000000UL, epoch);
+    TEST_ASSERT_GREATER_THAN(800000000UL, epoch);
 
     // Convert back and verify round-trip
     uint16_t y = 0;

@@ -237,7 +237,7 @@ public:
      */
     void onEvent(const ggg::system::SystemEvent& event) override;
 
-    bool isAuthoritative() const { return _isAuthoritative; }
+    bool isAuthoritative() const override { return _isAuthoritative; }
     size_t getSyncCount() const { return _syncCount; }
     bool isInitialized() const { return _isInitialized; }
 

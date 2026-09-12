@@ -124,6 +124,19 @@ public:
     static bool deserializeBundleHeader(ggg::hal::IInputStream& stream,
                                         BundleHeader& outHeader,
                                         size_t& outPayloadLength);
+
+    /**
+     * @brief Re-serializes a BPv7 Bundle with updated header and copies payload from an input stream.
+     * @param newHeader Updated Primary Block fields (e.g. sanitized timestamp/lifetime).
+     * @param payloadStream Input stream positioned at the payload data bytes.
+     * @param payloadLength Number of payload bytes to copy.
+     * @param outStream Destination output stream.
+     * @return true on success.
+     */
+    static bool reserializeBundleWithNewHeader(const BundleHeader& newHeader,
+                                               ggg::hal::IInputStream& payloadStream,
+                                               size_t payloadLength,
+                                               ggg::hal::IOutputStream& outStream);
 };
 
 } // namespace bpa

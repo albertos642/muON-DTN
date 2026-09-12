@@ -91,7 +91,7 @@ bool CBORSerializer::encodeEID(ggg::hal::IOutputStream& stream, const IpnEndpoin
 }
 
 bool CBORSerializer::encodeCreationTimestamp(ggg::hal::IOutputStream& stream, uint64_t timestamp, uint64_t seqNo) {
-    // RFC 9171: Creation Timestamp = Array[2] { creationTime, sequenceNumber }
+    // RFC 9171 Section 4.2.5.1: Creation Timestamp = Array[2] { creationTime, sequenceNumber }
     if (!encodeArrayHeader(stream, 2)) return false;
     if (!encodeUnsignedInteger(stream, timestamp)) return false;
     if (!encodeUnsignedInteger(stream, seqNo)) return false;
@@ -432,8 +432,8 @@ bool CBORSerializer::serializeBundle(const BundleHeader& header,
                                     size_t payloadLength,
                                     ggg::hal::IOutputStream& stream)
 {
-    // A BPv7 bundle is a CBOR array of blocks: [PrimaryBlock, PayloadBlock, ...]
-    if (!encodeArrayHeader(stream, 2)) return false;
+    // RFC 9171 Section 4.1: Each bundle is a CBOR indefinite-length array (0x9F)
+    if (stream.write(0x9F) != 1) return false;
 
     // ------------------------------------------------------------------------
     // Primary Block Serialization
@@ -462,11 +462,13 @@ bool CBORSerializer::serializeBundle(const BundleHeader& header,
     // 6. Report-To EID
     if (!encodeEID(stream, header.reportTo)) return false;
 
-    // 7. Creation Timestamp
-    if (!encodeCreationTimestamp(stream, header.creationTimestamp, header.sequenceNumber)) return false;
+    // 7. Creation Timestamp (in milliseconds as per RFC 9171)
+    uint64_t tsWire = (header.creationTimestamp > 0 && header.creationTimestamp < 10000000000ULL) ? (header.creationTimestamp * 1000ULL) : header.creationTimestamp;
+    if (!encodeCreationTimestamp(stream, tsWire, header.sequenceNumber)) return false;
 
-    // 8. Lifetime
-    if (!encodeUnsignedInteger(stream, header.lifetime)) return false;
+    // 8. Lifetime (RFC 9171 specifies lifetime in milliseconds)
+    uint64_t lifetimeMs = (header.lifetime > 0 && header.lifetime < 100000000ULL) ? (header.lifetime * 1000ULL) : header.lifetime;
+    if (!encodeUnsignedInteger(stream, lifetimeMs)) return false;
 
     // Fragmentation fields if IS_FRAGMENT is active
     if (header.isFragment()) {
@@ -493,6 +495,9 @@ bool CBORSerializer::serializeBundle(const BundleHeader& header,
     // Payload ByteString
     if (!encodeByteString(stream, payloadData, payloadLength)) return false;
 
+    // RFC 9171 Section 4.1: Indefinite-length array terminated by CBOR break stop code (0xFF)
+    if (stream.write(0xFF) != 1) return false;
+
     stream.flush();
     return true;
 }
@@ -503,7 +508,8 @@ bool CBORSerializer::serializeBundleFromStorage(const BundleHeader& header,
                                                 ggg::hal::IOutputStream& stream)
 {
     size_t payloadLength = storage.getSize(payloadHandle);
-    if (!encodeArrayHeader(stream, 2)) return false;
+    // RFC 9171 Section 4.1: Each bundle is a CBOR indefinite-length array (0x9F)
+    if (stream.write(0x9F) != 1) return false;
 
     // Primary Block
     uint8_t primaryElemCount = header.isFragment() ? 10 : 8;
@@ -516,8 +522,12 @@ bool CBORSerializer::serializeBundleFromStorage(const BundleHeader& header,
     if (!encodeEID(stream, header.destination)) return false;
     if (!encodeEID(stream, header.source)) return false;
     if (!encodeEID(stream, header.reportTo)) return false;
-    if (!encodeCreationTimestamp(stream, header.creationTimestamp, header.sequenceNumber)) return false;
-    if (!encodeUnsignedInteger(stream, header.lifetime)) return false;
+
+    uint64_t tsWire = (header.creationTimestamp > 0 && header.creationTimestamp < 10000000000ULL) ? (header.creationTimestamp * 1000ULL) : header.creationTimestamp;
+    if (!encodeCreationTimestamp(stream, tsWire, header.sequenceNumber)) return false;
+
+    uint64_t lifetimeMs = (header.lifetime > 0 && header.lifetime < 100000000ULL) ? (header.lifetime * 1000ULL) : header.lifetime;
+    if (!encodeUnsignedInteger(stream, lifetimeMs)) return false;
 
     if (header.isFragment()) {
         if (!encodeUnsignedInteger(stream, header.fragmentOffset)) return false;
@@ -548,6 +558,9 @@ bool CBORSerializer::serializeBundleFromStorage(const BundleHeader& header,
         offset += toRead;
         remaining -= toRead;
     }
+
+    // RFC 9171 Section 4.1: Indefinite-length array terminated by CBOR break stop code (0xFF)
+    if (stream.write(0xFF) != 1) return false;
 
     stream.flush();
     return true;
@@ -597,11 +610,15 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
     // 6. Report-To EID
     if (!decodeEID(stream, outHeader.reportTo)) return false;
 
-    // 7. Creation Timestamp
-    if (!decodeCreationTimestamp(stream, outHeader.creationTimestamp, outHeader.sequenceNumber)) return false;
+    // 7. Creation Timestamp (RFC 9171 specifies milliseconds)
+    uint64_t rawTimestamp = 0;
+    if (!decodeCreationTimestamp(stream, rawTimestamp, outHeader.sequenceNumber)) return false;
+    outHeader.creationTimestamp = (rawTimestamp >= 1000) ? (rawTimestamp / 1000ULL) : rawTimestamp;
 
-    // 8. Lifetime
-    if (!decodeUnsignedInteger(stream, outHeader.lifetime)) return false;
+    // 8. Lifetime (RFC 9171 specifies milliseconds)
+    uint64_t rawLifetime = 0;
+    if (!decodeUnsignedInteger(stream, rawLifetime)) return false;
+    outHeader.lifetime = (rawLifetime >= 1000) ? (rawLifetime / 1000ULL) : rawLifetime;
 
     size_t readSoFar = 8;
 
@@ -691,6 +708,65 @@ bool CBORSerializer::deserializeBundleHeader(ggg::hal::IInputStream& stream,
     }
 
     return false; // No payload block discovered
+}
+
+bool CBORSerializer::reserializeBundleWithNewHeader(const BundleHeader& newHeader,
+                                                    ggg::hal::IInputStream& payloadStream,
+                                                    size_t payloadLength,
+                                                    ggg::hal::IOutputStream& outStream)
+{
+    // RFC 9171 Section 4.1: Indefinite-length array opening token (0x9F)
+    if (outStream.write(0x9F) != 1) return false;
+
+    // Primary Block
+    uint8_t primaryElemCount = newHeader.isFragment() ? 10 : 8;
+    if (newHeader.crcType != 0) primaryElemCount += 1;
+    if (!encodeArrayHeader(outStream, primaryElemCount)) return false;
+
+    if (!encodeUnsignedInteger(outStream, newHeader.version)) return false;
+    if (!encodeUnsignedInteger(outStream, newHeader.controlFlags)) return false;
+    if (!encodeUnsignedInteger(outStream, newHeader.crcType)) return false;
+    if (!encodeEID(outStream, newHeader.destination)) return false;
+    if (!encodeEID(outStream, newHeader.source)) return false;
+    if (!encodeEID(outStream, newHeader.reportTo)) return false;
+    uint64_t tsWire = (newHeader.creationTimestamp > 0 && newHeader.creationTimestamp < 10000000000ULL) ? (newHeader.creationTimestamp * 1000ULL) : newHeader.creationTimestamp;
+    if (!encodeCreationTimestamp(outStream, tsWire, newHeader.sequenceNumber)) return false;
+
+    uint64_t lifetimeMs = (newHeader.lifetime > 0 && newHeader.lifetime < 100000000ULL) ? (newHeader.lifetime * 1000ULL) : newHeader.lifetime;
+    if (!encodeUnsignedInteger(outStream, lifetimeMs)) return false;
+
+    if (newHeader.isFragment()) {
+        if (!encodeUnsignedInteger(outStream, newHeader.fragmentOffset)) return false;
+        if (!encodeUnsignedInteger(outStream, newHeader.totalAppDataLength)) return false;
+    }
+    if (newHeader.crcType != 0) {
+        if (!encodeUnsignedInteger(outStream, 0)) return false;
+    }
+
+    // Payload Block
+    if (!encodeArrayHeader(outStream, 5)) return false;
+    if (!encodeUnsignedInteger(outStream, 1)) return false; // Block Type: 1
+    if (!encodeUnsignedInteger(outStream, 1)) return false; // Block Number: 1
+    if (!encodeUnsignedInteger(outStream, 0)) return false; // Block Control Flags: 0
+    if (!encodeUnsignedInteger(outStream, 0)) return false; // CRC Type: 0
+
+    if (!encodeByteStringHeader(outStream, payloadLength)) return false;
+
+    // Stream payload bytes from payloadStream in 32-byte chunks (Zero-Malloc)
+    uint8_t chunk[32];
+    size_t remaining = payloadLength;
+    while (remaining > 0) {
+        size_t toRead = (remaining < sizeof(chunk)) ? remaining : sizeof(chunk);
+        if (!readExactBytes(payloadStream, chunk, toRead)) return false;
+        if (outStream.write(chunk, toRead) != toRead) return false;
+        remaining -= toRead;
+    }
+
+    // RFC 9171 Section 4.1: Indefinite-length array terminated by CBOR break stop code (0xFF)
+    if (outStream.write(0xFF) != 1) return false;
+
+    outStream.flush();
+    return true;
 }
 
 } // namespace bpa
