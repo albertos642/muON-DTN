@@ -260,7 +260,16 @@ static uint32_t getArduinoMillis() {
 class AppEventListener : public ggg::system::IEventListener {
 public:
     void onEvent(const ggg::system::SystemEvent& event) override {
-        if (event.type == muon::events::MUON_EVT_RX_READY) {
+        if (event.type == 0x0100 || event.type == ggg::system::GGG_EVT_APP_TRIGGER) {
+            MUON_LOG(F("[Button] Press event detected (code="));
+            MUON_LOG(event.payload.u32[0]);
+            MUON_LOGLN(F(")! Sampling BME280 & creating bundle..."));
+            digitalWrite(LED_BUILTIN, HIGH);
+        } else if (event.type == muon::events::MUON_EVT_ROUTE_REQ) {
+            MUON_LOG(F("[BPA] Bundle created & enqueued (Handle: "));
+            MUON_LOG(event.payload.u32[0]);
+            MUON_LOGLN(F("), routing request dispatched to CLM"));
+        } else if (event.type == muon::events::MUON_EVT_RX_READY) {
             MUON_LOG(F("[muON] Received Bundle Handle: "));
             MUON_LOGLN(event.payload.u32[0]);
 
@@ -269,9 +278,15 @@ public:
                                            static_cast<int8_t>(g_loraModem.getSNR()));
 #endif
         } else if (event.type == muon::events::MUON_EVT_TX_SUCCESS) {
-            MUON_LOGLN(F("[muON] TX Success"));
+            MUON_LOG(F("[muON] TX Success! Bundle "));
+            MUON_LOG(event.payload.u32[0]);
+            MUON_LOGLN(F(" successfully sent over LoRa."));
+            digitalWrite(LED_BUILTIN, LOW);
         } else if (event.type == muon::events::MUON_EVT_TX_FAILURE) {
-            MUON_LOGLN(F("[muON] TX Failure (NACK/Timeout)"));
+            MUON_LOG(F("[muON] TX Failure on Bundle "));
+            MUON_LOG(event.payload.u32[0]);
+            MUON_LOGLN(F(" (NACK or ACK Timeout)."));
+            digitalWrite(LED_BUILTIN, LOW);
         }
     }
 };
@@ -298,6 +313,10 @@ static void ClmTickTask(void *pvParameters) {
             g_loraModem.handleInterrupt();
         }
 
+#if defined(CONFIG_GGG_PLUGIN_BUTTON)
+        g_buttonPlugin.tick();
+#endif
+
         g_clm.tickAll();
 
 #if defined(CONFIG_MUON_PLUGIN_OLED_DISPLAY)
@@ -316,8 +335,18 @@ static void ClmTickTask(void *pvParameters) {
 
 static void AppTask(void *pvParameters) {
     (void)pvParameters;
+    uint32_t uptimeSec = 0;
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        uptimeSec++;
+
+#if defined(CONFIG_MUON_NODE_ROLE_A)
+        if (uptimeSec % 5 == 0) {
+            MUON_LOG(F("[Node A] Uptime: "));
+            MUON_LOG(uptimeSec);
+            MUON_LOGLN(F("s | EID ipn:1.1 | Press Button on Pin 5 to sample & send bundle"));
+        }
+#endif
     }
 }
 
@@ -325,13 +354,34 @@ static void AppTask(void *pvParameters) {
 // 6. System Setup
 // ----------------------------------------------------------------------------
 void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, LOW);
+
 #if defined(CONFIG_MUON_DEBUG_USE_SERIAL1)
     Serial1.begin(115200);
 #endif
 
     // Initialize USB Serial (non-blocking, battery safe)
     Serial.begin(115200);
+
+#if !defined(CONFIG_MUON_NODE_ROLE_B) || !defined(CONFIG_MUON_UART_COBS_ENABLED)
+    // On Native USB CDC (Feather M0), wait up to 3000 ms for Serial Monitor to open.
+    // If running on battery without PC, times out after 3s and proceeds safely.
+    uint32_t startWait = millis();
+    while (!Serial && (millis() - startWait < 3000)) {
+        delay(10);
+    }
+#else
     delay(200);
+#endif
+
+    // Fast 3-blink startup sequence to give immediate visual confirmation of boot
+    for (int i = 0; i < 3; i++) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(60);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(60);
+    }
 
     MUON_LOGLN(F("=========================================="));
     MUON_LOGLN(F(" muON-DTN: Micro Interplanetary Overlay   "));
@@ -353,7 +403,7 @@ void setup() {
     if (g_rtcPlugin.begin()) {
         MUON_LOGLN(F("[RTC] DS3231 initialized successfully."));
     } else {
-        MUON_LOGLN(F("[RTC] WARNING: DS3231 not detected on I2C bus."));
+        MUON_LOGLN(F("[RTC] WARNING: DS3231 not detected on I2C bus; using internal timer fallback."));
     }
 #endif
 
@@ -370,21 +420,23 @@ void setup() {
 
 #if defined(CONFIG_MUON_PLUGIN_SENSOR_BME280)
     if (g_bmePlugin.begin()) {
-        MUON_LOGLN(F("[BME280] Sensor initialized in forced mode."));
-    } else {
-        MUON_LOGLN(F("[BME280] WARNING: BME280 not detected on I2C bus."));
+        if (g_bmePlugin.isSensorDetected()) {
+            MUON_LOGLN(F("[BME280] Sensor detected on I2C bus (forced mode)."));
+        } else {
+            MUON_LOGLN(F("[BME280] Sensor not responding on I2C (0x76); running in fallback simulation mode."));
+        }
     }
 #endif
 
 #if defined(CONFIG_GGG_PLUGIN_BUTTON)
     if (g_buttonPlugin.begin()) {
-        MUON_LOGLN(F("[Button] Pushbutton plugin active."));
+        MUON_LOGLN(F("[Button] Pushbutton plugin active on Pin 5 (active-low pullup)."));
     }
 #endif
 
 #if defined(CONFIG_MUON_PLUGIN_LED_ACTUATOR)
     if (g_ledPlugin.begin()) {
-        MUON_LOGLN(F("[Actuator] LED Actuator plugin registered."));
+        MUON_LOGLN(F("[Actuator] LED Actuator plugin registered (service 2)."));
     }
 #endif
 
@@ -434,7 +486,7 @@ void setup() {
     xTaskCreate(
         ClmTickTask,
         "ClmTick",
-        256,
+        384,
         nullptr,
         2,
         nullptr

@@ -2,7 +2,7 @@
 
 ## Reference Paper
 > **"Integrating LoRa nodes into global DTN networks"**  
-> *Carlo Caini, Alberto Soncini, Jernej Grasic (2026)*  
+> *Carlo Caini, Alberto Soncini, Samo Grasic (2026)*  
 > Alma Mater Studiorum – University of Bologna
 
 ---

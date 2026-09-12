@@ -184,6 +184,7 @@ public:
 
     size_t getTransmittedCount() const { return _transmittedCount; }
     bool isInitialized() const { return _isInitialized; }
+    bool isSensorDetected() const { return _sensorDetected; }
 
 private:
     IBme280Driver*          _driver;
@@ -197,6 +198,7 @@ private:
     uint32_t                _lifetimeSec;
     size_t                  _transmittedCount;
     bool                    _isInitialized;
+    bool                    _sensorDetected;
 };
 
 } // namespace plugins

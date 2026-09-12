@@ -159,7 +159,7 @@ uint32_t RtcDs3231Plugin::readHardwareEpoch() const {
 
 uint32_t RtcDs3231Plugin::getDtnTimestamp() const {
     if (!_isInitialized) {
-        return 0;
+        return static_cast<uint32_t>(GET_MILLIS() / 1000);
     }
 
     uint32_t nowMs = GET_MILLIS();
