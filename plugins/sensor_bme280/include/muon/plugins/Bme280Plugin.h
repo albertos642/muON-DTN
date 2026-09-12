@@ -54,6 +54,10 @@
 #define CONFIG_MUON_BME280_BUNDLE_LIFETIME_SEC 3600
 #endif
 
+#ifndef CONFIG_MUON_BME280_PAYLOAD_TEMPLATE
+#define CONFIG_MUON_BME280_PAYLOAD_TEMPLATE "{\"T\":{T},\"H\":{H},\"P\":{P}}"
+#endif
+
 namespace muon {
 namespace plugins {
 
@@ -151,7 +155,8 @@ private:
 /**
  * @brief BME280 Environmental Sensor Plugin for muON.
  * Reacts to SystemBus trigger events, samples environmental data,
- * formats a compact JSON string on the stack (Zero-Malloc), and sends a DTN bundle.
+ * formats a compact string on the stack using a configurable template (Zero-Malloc),
+ * and sends a DTN bundle.
  */
 class Bme280Plugin : public ggg::system::IEventListener {
 public:
@@ -163,7 +168,8 @@ public:
                  uint32_t destNode = CONFIG_MUON_BME280_DEST_NODE,
                  uint32_t destService = CONFIG_MUON_BME280_DEST_SERVICE,
                  uint8_t priority = CONFIG_MUON_BME280_BUNDLE_PRIORITY,
-                 uint32_t lifetimeSec = CONFIG_MUON_BME280_BUNDLE_LIFETIME_SEC);
+                 uint32_t lifetimeSec = CONFIG_MUON_BME280_BUNDLE_LIFETIME_SEC,
+                 const char* payloadTemplate = CONFIG_MUON_BME280_PAYLOAD_TEMPLATE);
 
     virtual ~Bme280Plugin() override = default;
 
@@ -182,6 +188,23 @@ public:
      */
     bool readAndSend();
 
+    /**
+     * @brief Sets the format template string for the generated payload.
+     * Supported placeholders: {T} (Temp), {H} (Humidity), {P} (Pressure).
+     */
+    void setPayloadTemplate(const char* tpl);
+    const char* getPayloadTemplate() const { return _payloadTemplate; }
+
+    /**
+     * @brief Static helper to format telemetry according to template into a stack buffer.
+     */
+    static size_t formatPayloadWithTemplate(const char* tpl, 
+                                            float tempC, 
+                                            float humidityPercent, 
+                                            float pressureHpa, 
+                                            char* outBuf, 
+                                            size_t outSize);
+
     size_t getTransmittedCount() const { return _transmittedCount; }
     bool isInitialized() const { return _isInitialized; }
     bool isSensorDetected() const { return _sensorDetected; }
@@ -196,10 +219,12 @@ private:
     uint32_t                _destService;
     uint8_t                 _priority;
     uint32_t                _lifetimeSec;
+    char                    _payloadTemplate[96];
     size_t                  _transmittedCount;
     bool                    _isInitialized;
     bool                    _sensorDetected;
 };
+
 
 } // namespace plugins
 } // namespace muon

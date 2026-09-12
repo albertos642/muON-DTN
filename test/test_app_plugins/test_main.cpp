@@ -36,8 +36,15 @@ using namespace muon::events;
 // Dummy Time Provider for testing
 // ============================================================================
 class MockSimpleTime : public ITimeProvider {
+private:
+    uint32_t _time;
+    bool     _isAuth;
 public:
-    uint32_t getDtnTimestamp() const override { return 1750000000; }
+    MockSimpleTime(uint32_t t = 1750000000UL, bool auth = true) : _time(t), _isAuth(auth) {}
+    uint32_t getDtnTimestamp() const override { return _time; }
+    void setTime(uint32_t t) { _time = t; }
+    bool isAuthoritative() const override { return _isAuth; }
+    void setAuth(bool a) { _isAuth = a; }
 };
 
 // Setup / Teardown
@@ -187,6 +194,87 @@ void test_oled_plugin_tick_rate_limiting() {
     TEST_ASSERT_EQUAL_UINT(initialDraws + 1, renderer.getDrawCount());
 }
 
+void test_oled_plugin_cbor_bundle_delivery() {
+    MockOledRenderer renderer;
+    RamStorage storage;
+    const uint8_t OLED_SERVICE_ID = 10;
+    MockSimpleTime timeProv(842000000UL, true);
+    StaticRoutingEngine router;
+    BundleAgent bpa(&storage, &timeProv, &router);
+    OledDisplayPlugin plugin(&renderer, &storage, OLED_SERVICE_ID, 2, &timeProv, &bpa);
+    plugin.begin();
+
+    // Create a genuine BPv7 bundle containing payload "REBOOT SYSTEM"
+    BundleHeader header;
+    header.version = 7;
+    header.controlFlags = 0;
+    header.crcType = 0;
+    header.destination = { 1, OLED_SERVICE_ID }; // ipn:1.10
+    header.source = { 3, 1 }; // ipn:3.1
+    header.reportTo = { 3, 1 };
+    header.creationTimestamp = 842000000UL;
+    header.sequenceNumber = 1;
+    header.lifetime = 3600;
+
+    const char* cmdPayload = "REBOOT SYSTEM";
+    StorageOutputStream outStream(storage, 128);
+    TEST_ASSERT_TRUE(CBORSerializer::serializeBundle(header, reinterpret_cast<const uint8_t*>(cmdPayload), strlen(cmdPayload), outStream));
+    StorageHandle_t h = outStream.commit();
+    TEST_ASSERT_NOT_EQUAL(GGG_INVALID_HANDLE, h);
+
+    // Deliver to OLED plugin
+    SystemEvent ev = {};
+    ev.type = MUON_EVT_BUNDLE_DELIVERED;
+    ev.payload.u32[0] = h;
+    ev.payload.u32[1] = (1 << 16) | OLED_SERVICE_ID;
+    SystemBus::getInstance().publish(ev);
+    SystemBus::getInstance().dispatchOne();
+
+    plugin.forceRedraw();
+    TEST_ASSERT_TRUE(plugin.getData().hasNewMessage);
+    TEST_ASSERT_EQUAL_STRING(cmdPayload, plugin.getData().lastMessage);
+    TEST_ASSERT_EQUAL_STRING("MSG RCVD", plugin.getData().statusStr);
+}
+
+void test_oled_plugin_rtc_display_and_marquee() {
+    MockOledRenderer renderer;
+    RamStorage storage;
+    // 842000000 seconds: 842000000 % 86400 = 32000 -> 08:53:20 UTC
+    MockSimpleTime timeProv(842000000UL, true);
+    OledDisplayPlugin plugin(&renderer, &storage, 10, 2, &timeProv);
+    plugin.begin();
+
+    plugin.tick(1000);
+    TEST_ASSERT_TRUE(plugin.getData().isRtcAuthoritative);
+    TEST_ASSERT_EQUAL_STRING("08:53:20", plugin.getData().rtcStr);
+
+    // If time provider is not authoritative and time is 0
+    timeProv.setAuth(false);
+    timeProv.setTime(0);
+    plugin.tick(2000);
+    TEST_ASSERT_FALSE(plugin.getData().isRtcAuthoritative);
+    TEST_ASSERT_EQUAL_STRING("RTC:--", plugin.getData().rtcStr);
+
+    // Test marquee scrolling with a long message (> 124 px, i.e. > 20 chars)
+    const char* longMsg = "ALERT: This is a very long sensor alert message for marquee testing!";
+    StorageHandle_t h = storage.beginWrite();
+    storage.writeData(h, reinterpret_cast<const uint8_t*>(longMsg), strlen(longMsg));
+    storage.commitWrite(h);
+
+    SystemEvent ev = {};
+    ev.type = MUON_EVT_BUNDLE_DELIVERED;
+    ev.payload.u32[0] = h;
+    ev.payload.u32[1] = (1 << 16) | 10;
+    SystemBus::getInstance().publish(ev);
+    SystemBus::getInstance().dispatchOne();
+
+    TEST_ASSERT_EQUAL_UINT16(0, plugin.getData().scrollOffset);
+
+    // Tick forward past marquee interval (80ms)
+    plugin.tick(2100);
+    TEST_ASSERT_GREATER_THAN(0, plugin.getData().scrollOffset);
+}
+
 // ============================================================================
 // 2. BME280 Environmental Sensor Plugin Tests
 // ============================================================================
@@ -254,6 +342,55 @@ void test_bme280_plugin_ignore_mismatched_trigger_code() {
 
     TEST_ASSERT_EQUAL_UINT(0, driver.getReadCount());
     TEST_ASSERT_EQUAL_UINT(0, sensor.getTransmittedCount());
+}
+
+void test_bme280_payload_template_formatting() {
+    char outBuf[128];
+
+    // 1. Default template
+    size_t len1 = Bme280Plugin::formatPayloadWithTemplate("{\"T\":{T},\"H\":{H},\"P\":{P}}", 25.10f, 60.50f, 1012.30f, outBuf, sizeof(outBuf));
+    TEST_ASSERT_GREATER_THAN(0, len1);
+    TEST_ASSERT_EQUAL_STRING("{\"T\":25.10,\"H\":60.50,\"P\":1012.30}", outBuf);
+
+    // 2. Custom text template with lowercase placeholders
+    size_t len2 = Bme280Plugin::formatPayloadWithTemplate("T={t}C H={h}% P={p}hPa", 21.05f, 45.00f, 998.50f, outBuf, sizeof(outBuf));
+    TEST_ASSERT_GREATER_THAN(0, len2);
+    TEST_ASSERT_EQUAL_STRING("T=21.05C H=45.00% P=998.50hPa", outBuf);
+
+    // 3. Partial / repeated placeholders
+    size_t len3 = Bme280Plugin::formatPayloadWithTemplate("TEMP:{T}, AGAIN:{T}", 30.00f, 50.00f, 1000.00f, outBuf, sizeof(outBuf));
+    TEST_ASSERT_GREATER_THAN(0, len3);
+    TEST_ASSERT_EQUAL_STRING("TEMP:30.00, AGAIN:30.00", outBuf);
+
+    // 4. Runtime plugin setting and transmission test
+    MockBme280Driver driver(28.0f, 70.0f, 1015.0f);
+    RamStorage storage;
+    MockSimpleTime timeProv;
+    StaticRoutingEngine router;
+    BundleAgent bpa(&storage, &timeProv, &router);
+
+    Bme280Plugin sensor(&driver, &bpa, 0x76, 0x0100, 1, 2, 1, 1, 3600, "DATA: {T}|{H}|{P}");
+    sensor.begin();
+
+    SystemEvent ev = {};
+    ev.type = 0x0100;
+    ev.payload.u32[0] = 1;
+    SystemBus::getInstance().publish(ev);
+    SystemBus::getInstance().dispatchOne();
+
+    BundleMetadata meta = {};
+    TEST_ASSERT_TRUE(bpa.getMetadataTable().getOldest(0, meta));
+    StorageInputStream inStream(storage, meta.storageHandle);
+    BundleHeader header;
+    size_t readPayloadLen = 0;
+    TEST_ASSERT_TRUE(CBORSerializer::deserializeBundleHeader(inStream, header, readPayloadLen));
+
+    char receivedPayload[128];
+    size_t toRead = (readPayloadLen < sizeof(receivedPayload) - 1) ? readPayloadLen : sizeof(receivedPayload) - 1;
+    size_t sz = inStream.readBytes(reinterpret_cast<uint8_t*>(receivedPayload), toRead);
+    receivedPayload[sz] = '\0';
+
+    TEST_ASSERT_EQUAL_STRING("DATA: 28.00|70.00|1015.00", receivedPayload);
 }
 
 // ============================================================================
@@ -466,11 +603,14 @@ int main(int argc, char **argv) {
     // 1. OLED Display Plugin
     RUN_TEST(test_oled_plugin_lifecycle_and_events);
     RUN_TEST(test_oled_plugin_bundle_delivery_service_id);
+    RUN_TEST(test_oled_plugin_cbor_bundle_delivery);
+    RUN_TEST(test_oled_plugin_rtc_display_and_marquee);
     RUN_TEST(test_oled_plugin_tick_rate_limiting);
 
     // 2. BME280 Sensor Plugin
     RUN_TEST(test_bme280_plugin_trigger_and_transmission);
     RUN_TEST(test_bme280_plugin_ignore_mismatched_trigger_code);
+    RUN_TEST(test_bme280_payload_template_formatting);
 
     // 3. RTC DS3231 Plugin
     RUN_TEST(test_rtc_ds3231_datetime_conversions);

@@ -68,4 +68,16 @@ if MUON_PLUGIN_SENSOR_BME280
         help
           Custody expiration time in seconds (default: 1 hour).
 
+    config MUON_BME280_PAYLOAD_TEMPLATE
+        string "Payload format template string"
+        default "{\"T\":{T},\"H\":{H},\"P\":{P}}"
+        help
+          Payload format template string. Supported placeholders:
+            {T} - Temperature in °C (e.g. 28.74)
+            {H} - Relative Humidity in % (e.g. 38.68)
+            {P} - Pressure in hPa (e.g. 1017.09)
+          Example: "{\"T\":{T},\"H\":{H},\"P\":{P}}" or "T={T}C H={H}% P={P}hPa"
+
 endif
+
+

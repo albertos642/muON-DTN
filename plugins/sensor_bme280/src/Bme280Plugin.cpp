@@ -23,7 +23,8 @@ Bme280Plugin::Bme280Plugin(IBme280Driver* driver,
                            uint32_t destNode,
                            uint32_t destService,
                            uint8_t priority,
-                           uint32_t lifetimeSec)
+                           uint32_t lifetimeSec,
+                           const char* payloadTemplate)
     : _driver(driver),
       _bpa(bpa),
       _i2cAddress(i2cAddress),
@@ -37,6 +38,69 @@ Bme280Plugin::Bme280Plugin(IBme280Driver* driver,
       _isInitialized(false),
       _sensorDetected(false)
 {
+    setPayloadTemplate(payloadTemplate);
+}
+
+void Bme280Plugin::setPayloadTemplate(const char* tpl) {
+    if (tpl != nullptr && tpl[0] != '\0') {
+        strncpy(_payloadTemplate, tpl, sizeof(_payloadTemplate) - 1);
+        _payloadTemplate[sizeof(_payloadTemplate) - 1] = '\0';
+    } else {
+        strncpy(_payloadTemplate, "{\"T\":{T},\"H\":{H},\"P\":{P}}", sizeof(_payloadTemplate) - 1);
+        _payloadTemplate[sizeof(_payloadTemplate) - 1] = '\0';
+    }
+}
+
+size_t Bme280Plugin::formatPayloadWithTemplate(const char* tpl, 
+                                               float tempC, 
+                                               float humidityPercent, 
+                                               float pressureHpa, 
+                                               char* outBuf, 
+                                               size_t outSize)
+{
+    if (tpl == nullptr || outBuf == nullptr || outSize == 0) {
+        return 0;
+    }
+
+    size_t outIdx = 0;
+    size_t inIdx = 0;
+    size_t tplLen = strlen(tpl);
+
+    while (inIdx < tplLen && outIdx + 1 < outSize) {
+        if (tpl[inIdx] == '{') {
+            // Check for {T} or {t}
+            if (inIdx + 2 < tplLen && (tpl[inIdx + 1] == 'T' || tpl[inIdx + 1] == 't') && tpl[inIdx + 2] == '}') {
+                int written = snprintf(outBuf + outIdx, outSize - outIdx, "%.2f", tempC);
+                if (written > 0) {
+                    outIdx += (static_cast<size_t>(written) < outSize - outIdx) ? written : (outSize - outIdx - 1);
+                }
+                inIdx += 3;
+                continue;
+            }
+            // Check for {H} or {h}
+            if (inIdx + 2 < tplLen && (tpl[inIdx + 1] == 'H' || tpl[inIdx + 1] == 'h') && tpl[inIdx + 2] == '}') {
+                int written = snprintf(outBuf + outIdx, outSize - outIdx, "%.2f", humidityPercent);
+                if (written > 0) {
+                    outIdx += (static_cast<size_t>(written) < outSize - outIdx) ? written : (outSize - outIdx - 1);
+                }
+                inIdx += 3;
+                continue;
+            }
+            // Check for {P} or {p}
+            if (inIdx + 2 < tplLen && (tpl[inIdx + 1] == 'P' || tpl[inIdx + 1] == 'p') && tpl[inIdx + 2] == '}') {
+                int written = snprintf(outBuf + outIdx, outSize - outIdx, "%.2f", pressureHpa);
+                if (written > 0) {
+                    outIdx += (static_cast<size_t>(written) < outSize - outIdx) ? written : (outSize - outIdx - 1);
+                }
+                inIdx += 3;
+                continue;
+            }
+        }
+        outBuf[outIdx++] = tpl[inIdx++];
+    }
+
+    outBuf[outIdx] = '\0';
+    return outIdx;
 }
 
 bool Bme280Plugin::begin() {
@@ -83,13 +147,11 @@ bool Bme280Plugin::readAndSend() {
         tempC = 20.0f + static_cast<float>(_transmittedCount % 10);
     }
 
-    // Zero-Malloc: format JSON on local stack buffer
-    char jsonBuf[64];
-    int len = snprintf(jsonBuf, sizeof(jsonBuf), 
-                       "{\"T\":%.2f,\"H\":%.2f,\"P\":%.2f}", 
-                       tempC, humidityPercent, pressureHpa);
+    // Zero-Malloc: format string on local stack buffer using configured template
+    char payloadBuf[128];
+    size_t len = formatPayloadWithTemplate(_payloadTemplate, tempC, humidityPercent, pressureHpa, payloadBuf, sizeof(payloadBuf));
 
-    if (len <= 0 || static_cast<size_t>(len) >= sizeof(jsonBuf)) {
+    if (len == 0) {
         return false;
     }
 
@@ -104,7 +166,7 @@ bool Bme280Plugin::readAndSend() {
     MUON_LOG_STR("[BME280] Generated ADU (");
     MUON_LOG_U32(len);
     MUON_LOG_STR(" bytes): ");
-    MUON_LOG_STR(jsonBuf);
+    MUON_LOG_STR(payloadBuf);
     MUON_LOG_LN("");
 
     muon::bpa::IpnEndpointId destEid = { _destNode, _destService };
@@ -119,8 +181,8 @@ bool Bme280Plugin::readAndSend() {
     MUON_LOG_LN("s");
 
     bool ok = _bpa->sendLocalData(destEid, 
-                                  reinterpret_cast<const uint8_t*>(jsonBuf), 
-                                  static_cast<size_t>(len), 
+                                  reinterpret_cast<const uint8_t*>(payloadBuf), 
+                                  len, 
                                   _priority, 
                                   _lifetimeSec);
 
@@ -135,6 +197,7 @@ bool Bme280Plugin::readAndSend() {
 
     return ok;
 }
+
 
 } // namespace plugins
 } // namespace muon

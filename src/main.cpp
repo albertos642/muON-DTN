@@ -186,7 +186,9 @@ static muon::plugins::OledDisplayPlugin g_oledPlugin(
     &g_oledRenderer, 
     &g_storage, 
     CONFIG_MUON_OLED_APP_SERVICE_ID, 
-    CONFIG_MUON_OLED_REFRESH_RATE_HZ
+    CONFIG_MUON_OLED_REFRESH_RATE_HZ,
+    g_timeProvider,
+    &g_bundleAgent
 );
 #endif
 

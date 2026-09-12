@@ -12,6 +12,7 @@
 
 #include <ggg/system/SystemBus.h>
 #include <ggg/hal/IStorage.h>
+#include <muon/bpa/ITimeProvider.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <cstring>
@@ -41,6 +42,12 @@
 #endif
 
 namespace muon {
+namespace bpa {
+class BundleAgent;
+}
+}
+
+namespace muon {
 namespace plugins {
 
 /**
@@ -55,7 +62,7 @@ struct OledDashboardData {
     uint16_t rxReadyCount;
     int16_t  lastRssi;
     int8_t   lastSnr;
-    char     lastMessage[48];
+    char     lastMessage[96];
     uint32_t lastMessageTime;
     bool     hasNewMessage;
     // Enhanced Diagnostics
@@ -63,6 +70,10 @@ struct OledDashboardData {
     char     heartbeatChar;
     char     lastActionStr[32];
     bool     isHostConnected;
+    // Real-Time Clock & Marquee
+    char     rtcStr[12];
+    bool     isRtcAuthoritative;
+    uint16_t scrollOffset;
 };
 
 /**
@@ -115,7 +126,7 @@ public:
 private:
     size_t            _drawCount;
     bool              _isInitialized;
-    char              _lines[4][48];
+    char              _lines[4][96];
     OledDashboardData _lastData;
 };
 
@@ -128,6 +139,98 @@ private:
 #endif
 
 /**
+ * @brief 8x8 Monochrome XBM Icons for high-contrast OLED Status Bars.
+ * In XBM format, LSB (bit 0) is the leftmost pixel.
+ */
+static const uint8_t icon_mcu[8] = {
+    0x42, // . * . . . . * .
+    0x7E, // . * * * * * * .
+    0x5A, // . * . * * . * .
+    0x5A, // . * . * * . * .
+    0x5A, // . * . * * . * .
+    0x7E, // . * * * * * * .
+    0x42, // . * . . . . * .
+    0x00
+};
+
+static const uint8_t icon_clock[8] = {
+    0x3C, // . . * * * * . .
+    0x42, // . * . . . . * .
+    0x99, // * . . * * . . *
+    0x89, // * . . . * . . *
+    0x81, // * . . . . . . *
+    0x42, // . * . . . . * .
+    0x3C, // . . * * * * . .
+    0x00
+};
+
+static const uint8_t icon_link[8] = {
+    0x24, // . . * . . * . .
+    0x24, // . . * . . * . .
+    0x7E, // . * * * * * * .
+    0x7E, // . * * * * * * .
+    0x3C, // . . * * * * . .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x00
+};
+
+static const uint8_t icon_disk[8] = {
+    0x3C, // . . * * * * . .
+    0x42, // . * . . . . * .
+    0x7E, // . * * * * * * .
+    0x42, // . * . . . . * .
+    0x7E, // . * * * * * * .
+    0x42, // . * . . . . * .
+    0x3C, // . . * * * * . .
+    0x00
+};
+
+static const uint8_t icon_tx[8] = {
+    0x18, // . . . * * . . .
+    0x3C, // . . * * * * . .
+    0x7E, // . * * * * * * .
+    0xDB, // * * . * * . * *
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x00
+};
+
+static const uint8_t icon_rx[8] = {
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0xDB, // * * . * * . * *
+    0x7E, // . * * * * * * .
+    0x3C, // . . * * * * . .
+    0x18, // . . . * * . . .
+    0x00
+};
+
+static const uint8_t icon_warn[8] = {
+    0x18, // . . . * * . . .
+    0x24, // . . * . . * . .
+    0x5A, // . * . * * . * .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x00, // . . . . . . . .
+    0x18, // . . . * * . . .
+    0x00
+};
+
+static const uint8_t icon_antenna[8] = {
+    0xA5, // * . * . . * . *
+    0x42, // . * . . . . * .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x18, // . . . * * . . .
+    0x3C, // . . * * * * . .
+    0x00
+};
+
+/**
  * @brief Production U8g2 renderer with Page/Full Buffer support for SSD1306/SSD1315.
  */
 class U8g2OledRenderer : public IOledRenderer {
@@ -138,8 +241,6 @@ public:
     virtual ~U8g2OledRenderer() override = default;
 
     bool begin() override {
-        // Many OLED modules do not expose the RST pin (4-pin I2C modules: VCC, GND, SCL, SDA).
-        // If no reset pin is configured or resetPin < 0, pass U8X8_PIN_NONE to avoid wasting GPIOs.
         uint8_t rst = (_resetPin >= 0) ? (uint8_t)_resetPin : U8X8_PIN_NONE;
 
 #if defined(CONFIG_MUON_OLED_RES_128X32)
@@ -150,10 +251,8 @@ public:
     #endif
 #else
     #if defined(CONFIG_MUON_OLED_BUFFER_FULL)
-        // Full Framebuffer: 1024 bytes RAM
         static U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2Instance(U8G2_R0, rst);
     #else
-        // Page Buffer: 128 bytes RAM (ideal for memory-constrained MCUs like SAMD21)
         static U8G2_SSD1306_128X64_NONAME_1_HW_I2C u8g2Instance(U8G2_R0, rst);
     #endif
 #endif
@@ -168,46 +267,92 @@ public:
 
         _u8g2->firstPage();
         do {
-            _u8g2->setFont(u8g2_font_6x10_tf);
+            // ================================================================
+            // 1. TOP STATUS BAR (y=0..11, Divider at y=11)
+            // ================================================================
+            _u8g2->drawHLine(0, 11, 128);
 
-            // Row 1 (y=10): Role + Animated Heartbeat Spinner + Uptime / ION status
-            char lineBuf[32];
-            uint32_t mm = (data.uptimeSec / 60) % 100;
-            uint32_t ss = data.uptimeSec % 60;
+            // Node Symbol & Identity (x=1..36)
+            _u8g2->drawXBM(1, 1, 8, 8, icon_mcu);
+            _u8g2->setFont(u8g2_font_5x7_tf);
             if (data.roleStr[5] == 'B') {
-                const char* hostStr = data.isHostConnected ? "ION:OK" : "ION:--";
-                snprintf(lineBuf, sizeof(lineBuf), "Node B [%c] %s", 
-                         data.heartbeatChar ? data.heartbeatChar : '*', hostStr);
+                _u8g2->drawStr(11, 8, "B:2.1");
+            } else if (data.roleStr[5] == 'A') {
+                _u8g2->drawStr(11, 8, "A:1.1");
             } else {
-                snprintf(lineBuf, sizeof(lineBuf), "%s [%c] %02lu:%02lu", 
-                         data.roleStr, data.heartbeatChar ? data.heartbeatChar : '*',
-                         (unsigned long)mm, (unsigned long)ss);
+                _u8g2->drawStr(11, 8, data.roleStr);
             }
-            _u8g2->drawStr(0, 10, lineBuf);
 
-            // Row 2 (y=23): Status & Storage Count
-            snprintf(lineBuf, sizeof(lineBuf), "ST:%-7s  Bdl:%u", 
-                     data.statusStr, data.storageCount);
-            _u8g2->drawStr(0, 23, lineBuf);
-
-            // Row 3 (y=36): Packet Counters (TX, RX, ERR)
-            snprintf(lineBuf, sizeof(lineBuf), "TX:%-3u RX:%-3u E:%-2u", 
-                     data.txSuccessCount, data.rxReadyCount, data.txFailureCount);
-            _u8g2->drawStr(0, 36, lineBuf);
-
-            // Row 4 (y=49): Radio Telemetry
-            snprintf(lineBuf, sizeof(lineBuf), "RSSI:%-4d SNR:%-2d", 
-                     data.lastRssi, data.lastSnr);
-            _u8g2->drawStr(0, 49, lineBuf);
-
-            // Row 5 (y=62): Last Action / Payload Message
-            if (data.hasNewMessage && data.lastMessage[0] != '\0') {
-                _u8g2->drawStr(0, 62, data.lastMessage);
-            } else if (data.lastActionStr[0] != '\0') {
-                _u8g2->drawStr(0, 62, data.lastActionStr);
+            // Real-Time Clock (x=42..88)
+            _u8g2->drawXBM(42, 1, 8, 8, icon_clock);
+            if (data.isRtcAuthoritative && data.rtcStr[0] != '\0') {
+                _u8g2->drawStr(52, 8, data.rtcStr);
             } else {
-                _u8g2->drawStr(0, 62, "Waiting for traffic");
+                _u8g2->drawStr(52, 8, "RTC:--");
             }
+
+            // Host Link Status (x=96..118)
+            _u8g2->drawXBM(96, 1, 8, 8, icon_link);
+            _u8g2->drawStr(106, 8, data.isHostConnected ? "OK" : "--");
+
+            // Heartbeat spinner (x=122)
+            char spin[2] = { data.heartbeatChar ? data.heartbeatChar : '*', '\0' };
+            _u8g2->drawStr(122, 8, spin);
+
+            // ================================================================
+            // 2. CENTER DYNAMIC AREA (y=13..51)
+            // ================================================================
+            // Row 1 (y=24): State badge + Last Action Detail
+            _u8g2->setFont(u8g2_font_6x10_tf);
+            char stateBuf[64];
+            snprintf(stateBuf, sizeof(stateBuf), "[%s] %s", data.statusStr, data.lastActionStr);
+            _u8g2->drawStr(2, 24, stateBuf);
+
+            // Row 2 (y=42): Payload Message with Horizontal Marquee
+            const char* msgPtr = data.hasNewMessage && data.lastMessage[0] != '\0' 
+                                 ? data.lastMessage 
+                                 : "Waiting traffic...";
+            int strPxWidth = _u8g2->getStrWidth(msgPtr);
+            if (strPxWidth > 124) {
+                // Marquee scrolling smoothly from right to left
+                int xPos = 2 - static_cast<int>(data.scrollOffset);
+                _u8g2->drawStr(xPos, 42, msgPtr);
+            } else {
+                _u8g2->drawStr(2, 42, msgPtr);
+            }
+
+            // ================================================================
+            // 3. BOTTOM STATUS BAR (y=53..63, Divider at y=52)
+            // ================================================================
+            _u8g2->drawHLine(0, 52, 128);
+            _u8g2->setFont(u8g2_font_5x7_tf);
+            char numBuf[8];
+
+            // Metric 1: Storage Count (x=1..22)
+            _u8g2->drawXBM(1, 54, 8, 8, icon_disk);
+            snprintf(numBuf, sizeof(numBuf), "%u", data.storageCount);
+            _u8g2->drawStr(10, 61, numBuf);
+
+            // Metric 2: TX Success Count (x=26..47)
+            _u8g2->drawXBM(26, 54, 8, 8, icon_tx);
+            snprintf(numBuf, sizeof(numBuf), "%u", data.txSuccessCount);
+            _u8g2->drawStr(35, 61, numBuf);
+
+            // Metric 3: RX Ready Count (x=51..72)
+            _u8g2->drawXBM(51, 54, 8, 8, icon_rx);
+            snprintf(numBuf, sizeof(numBuf), "%u", data.rxReadyCount);
+            _u8g2->drawStr(60, 61, numBuf);
+
+            // Metric 4: Error Count (x=76..96)
+            _u8g2->drawXBM(76, 54, 8, 8, icon_warn);
+            snprintf(numBuf, sizeof(numBuf), "%u", data.txFailureCount);
+            _u8g2->drawStr(85, 61, numBuf);
+
+            // Metric 5: LoRa RSSI/SNR (x=99..127)
+            _u8g2->drawXBM(99, 54, 8, 8, icon_antenna);
+            snprintf(numBuf, sizeof(numBuf), "%d", data.lastRssi);
+            _u8g2->drawStr(108, 61, numBuf);
+
         } while (_u8g2->nextPage());
     }
 
@@ -226,7 +371,9 @@ public:
     OledDisplayPlugin(IOledRenderer* renderer, 
                       ggg::hal::IStorage* storage, 
                       uint8_t appServiceId = CONFIG_MUON_OLED_APP_SERVICE_ID,
-                      uint8_t refreshRateHz = CONFIG_MUON_OLED_REFRESH_RATE_HZ);
+                      uint8_t refreshRateHz = CONFIG_MUON_OLED_REFRESH_RATE_HZ,
+                      muon::bpa::ITimeProvider* timeProvider = nullptr,
+                      muon::bpa::BundleAgent* bpa = nullptr);
 
     virtual ~OledDisplayPlugin() override = default;
 
@@ -291,19 +438,36 @@ public:
      */
     void setHostConnected(bool connected);
 
+    /**
+     * @brief Sets time provider to query Real-Time Clock values for the top bar.
+     */
+    void setTimeProvider(muon::bpa::ITimeProvider* tp) {
+        _timeProvider = tp;
+    }
+
+    /**
+     * @brief Sets BPA instance to consume delivered bundles upon reception.
+     */
+    void setBundleAgent(muon::bpa::BundleAgent* bpa) {
+        _bpa = bpa;
+    }
+
     const OledDashboardData& getData() const { return _data; }
     IOledRenderer* getRenderer() const { return _renderer; }
 
 private:
-    IOledRenderer*      _renderer;
-    ggg::hal::IStorage* _storage;
-    uint8_t             _appServiceId;
-    uint32_t            _minRefreshIntervalMs;
-    uint32_t            _lastDrawTimeMs;
-    bool                _isDirty;
-    bool                _isInitialized;
-    bool                _hasHardwareError;
-    OledDashboardData   _data;
+    IOledRenderer*            _renderer;
+    ggg::hal::IStorage*       _storage;
+    uint8_t                   _appServiceId;
+    uint32_t                  _minRefreshIntervalMs;
+    uint32_t                  _lastDrawTimeMs;
+    uint32_t                  _lastScrollTickMs;
+    bool                      _isDirty;
+    bool                      _isInitialized;
+    bool                      _hasHardwareError;
+    muon::bpa::ITimeProvider* _timeProvider;
+    muon::bpa::BundleAgent*   _bpa;
+    OledDashboardData         _data;
 
     void updateStorageCount();
 };

@@ -9,6 +9,9 @@
 
 #include "muon/plugins/OledDisplayPlugin.h"
 #include <muon/bpa/MuonEvents.h>
+#include <muon/bpa/StorageStream.h>
+#include <muon/bpa/CBORSerializer.h>
+#include <muon/bpa/BundleAgent.h>
 #include <cstdio>
 #include <cstring>
 
@@ -18,20 +21,28 @@ namespace plugins {
 OledDisplayPlugin::OledDisplayPlugin(IOledRenderer* renderer, 
                                      ggg::hal::IStorage* storage, 
                                      uint8_t appServiceId,
-                                     uint8_t refreshRateHz)
+                                     uint8_t refreshRateHz,
+                                     muon::bpa::ITimeProvider* timeProvider,
+                                     muon::bpa::BundleAgent* bpa)
     : _renderer(renderer),
       _storage(storage),
       _appServiceId(appServiceId),
       _minRefreshIntervalMs((refreshRateHz > 0) ? (1000 / refreshRateHz) : 500),
       _lastDrawTimeMs(0),
+      _lastScrollTickMs(0),
       _isDirty(true),
       _isInitialized(false),
-      _hasHardwareError(false)
+      _hasHardwareError(false),
+      _timeProvider(timeProvider),
+      _bpa(bpa)
 {
     memset(&_data, 0, sizeof(_data));
     snprintf(_data.roleStr, sizeof(_data.roleStr), "muON Node");
     snprintf(_data.statusStr, sizeof(_data.statusStr), "BOOT");
     snprintf(_data.lastMessage, sizeof(_data.lastMessage), "No messages");
+    snprintf(_data.rtcStr, sizeof(_data.rtcStr), "RTC:--");
+    _data.isRtcAuthoritative = false;
+    _data.scrollOffset = 0;
     _data.lastRssi = 0;
     _data.lastSnr = 0;
     _data.uptimeSec = 0;
@@ -111,6 +122,52 @@ void OledDisplayPlugin::tick(uint32_t nowMs) {
         _isDirty = true;
     }
 
+    // Query Real-Time Clock from time provider
+    if (_timeProvider != nullptr) {
+        uint32_t dtnTime = _timeProvider->getDtnTimestamp();
+        bool isAuth = _timeProvider->isAuthoritative() || (dtnTime >= 1000000UL);
+        if (isAuth) {
+            uint32_t daySec = dtnTime % 86400;
+            uint32_t hh = daySec / 3600;
+            uint32_t mm = (daySec % 3600) / 60;
+            uint32_t ss = daySec % 60;
+            char tempRtc[12];
+            snprintf(tempRtc, sizeof(tempRtc), "%02lu:%02lu:%02lu", (unsigned long)hh, (unsigned long)mm, (unsigned long)ss);
+            if (strcmp(_data.rtcStr, tempRtc) != 0 || !_data.isRtcAuthoritative) {
+                strncpy(_data.rtcStr, tempRtc, sizeof(_data.rtcStr) - 1);
+                _data.rtcStr[sizeof(_data.rtcStr) - 1] = '\0';
+                _data.isRtcAuthoritative = true;
+                _isDirty = true;
+            }
+        } else {
+            if (_data.isRtcAuthoritative || strcmp(_data.rtcStr, "RTC:--") != 0) {
+                strncpy(_data.rtcStr, "RTC:--", sizeof(_data.rtcStr) - 1);
+                _data.rtcStr[sizeof(_data.rtcStr) - 1] = '\0';
+                _data.isRtcAuthoritative = false;
+                _isDirty = true;
+            }
+        }
+    }
+
+    // Marquee horizontal scroll for payload message
+    size_t msgLen = strlen(_data.lastMessage);
+    uint16_t textPxWidth = static_cast<uint16_t>(msgLen * 6);
+    if (textPxWidth > 124) {
+        if (nowMs - _lastScrollTickMs >= 80) {
+            _lastScrollTickMs = nowMs;
+            _data.scrollOffset += 2;
+            if (_data.scrollOffset > textPxWidth + 24) {
+                _data.scrollOffset = 0;
+            }
+            _isDirty = true;
+        }
+    } else {
+        if (_data.scrollOffset != 0) {
+            _data.scrollOffset = 0;
+            _isDirty = true;
+        }
+    }
+
     if (!_isDirty) {
         return;
     }
@@ -177,15 +234,54 @@ void OledDisplayPlugin::onEvent(const ggg::system::SystemEvent& event) {
             snprintf(_data.lastActionStr, sizeof(_data.lastActionStr), "DLV S:%u H:%u", service, (unsigned int)event.payload.u32[0]);
             if (service == _appServiceId && _storage != nullptr) {
                 ggg::hal::StorageHandle_t handle = static_cast<ggg::hal::StorageHandle_t>(event.payload.u32[0]);
-                size_t sz = _storage->getSize(handle);
-                if (sz > 0) {
-                    size_t toRead = (sz < sizeof(_data.lastMessage) - 1) ? sz : sizeof(_data.lastMessage) - 1;
-                    _storage->readData(handle, 0, reinterpret_cast<uint8_t*>(_data.lastMessage), toRead);
-                    _data.lastMessage[toRead] = '\0';
-                    _data.hasNewMessage = true;
-                    snprintf(_data.statusStr, sizeof(_data.statusStr), "MSG RCVD");
+                if (handle != GGG_INVALID_HANDLE) {
+                    bool decoded = false;
+                    muon::bpa::StorageInputStream inStream(*_storage, handle);
+                    muon::bpa::BundleHeader header;
+                    size_t payloadLength = 0;
+
+                    if (muon::bpa::CBORSerializer::deserializeBundleHeader(inStream, header, payloadLength)) {
+                        size_t toRead = (payloadLength < sizeof(_data.lastMessage) - 1) ? payloadLength : (sizeof(_data.lastMessage) - 1);
+                        size_t bytesRead = inStream.readBytes(reinterpret_cast<uint8_t*>(_data.lastMessage), toRead);
+                        _data.lastMessage[bytesRead] = '\0';
+                        decoded = true;
+                    }
+
+                    if (!decoded) {
+                        // Fallback for raw data in storage
+                        size_t sz = _storage->getSize(handle);
+                        if (sz > 0) {
+                            size_t toRead = (sz < sizeof(_data.lastMessage) - 1) ? sz : (sizeof(_data.lastMessage) - 1);
+                            _storage->readData(handle, 0, reinterpret_cast<uint8_t*>(_data.lastMessage), toRead);
+                            _data.lastMessage[toRead] = '\0';
+                            decoded = true;
+                        }
+                    }
+
+                    if (decoded) {
+                        // Sanitize newlines and unprintable characters
+                        size_t msgLen = strlen(_data.lastMessage);
+                        for (size_t i = 0; i < msgLen; i++) {
+                            if (_data.lastMessage[i] == '\r' || _data.lastMessage[i] == '\n') {
+                                _data.lastMessage[i] = ' ';
+                            } else if (static_cast<uint8_t>(_data.lastMessage[i]) < 32 || static_cast<uint8_t>(_data.lastMessage[i]) > 126) {
+                                _data.lastMessage[i] = '.';
+                            }
+                        }
+                        // Trim trailing whitespace
+                        while (msgLen > 0 && _data.lastMessage[msgLen - 1] == ' ') {
+                            _data.lastMessage[--msgLen] = '\0';
+                        }
+                        _data.hasNewMessage = true;
+                        _data.scrollOffset = 0;
+                        snprintf(_data.statusStr, sizeof(_data.statusStr), "MSG RCVD");
+                        _isDirty = true;
+                    }
+
+                    if (_bpa != nullptr) {
+                        _bpa->consumeDeliveredBundle(handle);
+                    }
                     updateStorageCount();
-                    _isDirty = true;
                 }
             }
             break;
