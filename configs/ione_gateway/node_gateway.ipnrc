@@ -1,8 +1,10 @@
 # node_gateway.ipnrc
-# IPN Static Routing for IONe Gateway Node 3
+# IPN Routing Configuration for IONe Gateway Node 3
+# Node 2 (muON Gateway / Relay) is directly connected via UARTCL-COBS.
+# Node 1 (muON Sensor / Actuator) is reached via Node 2.
 
-# Egress plan for Node 1 (muON Node A): route over uartcobs outduct via Node 2
-a plan 1 uartcobs//dev/ttyUSB0:115200
-
-# Egress plan for Node 2 (muON Node B Gateway MCU): route over uartcobs outduct
+# Egress plan for Node 2 (muON Node B Gateway MCU): direct physical link via UARTCL-COBS
 a plan 2 uartcobs//dev/ttyUSB0:115200
+
+# Static exit for Node 1 (muON Node A): forwarded via Node 2 gateway
+a exit 1 1 ipn:2.0

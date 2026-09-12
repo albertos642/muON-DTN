@@ -261,7 +261,24 @@ The startup script loads:
    ```
    - **Node A**: Pin 13 `LED_BUILTIN` turns **OFF** (toggled).
 
-### 6.3 Stopping IONe
+### 6.3 Test 3: Display Message on Node B OLED (PC $\to$ Node B Display)
+1. On the Linux PC, create a text message payload:
+   ```bash
+   echo "ALERT: TEMPERATURE HIGH" > alert.txt
+   ```
+2. Send the bundle directly to Node B's OLED display endpoint (`ipn:2.10`):
+   ```bash
+   bpsendfile ipn:3.1 ipn:2.10 alert.txt
+   ```
+3. **Observe on Node B OLED Display**:
+   - Top status bar: `[IC] N:2`, Real-time clock `HH:MM:SS`, `[LINK] ION:OK`, activity spinner.
+   - Dynamic Center Area:
+     - Badge changes to `[MSG RCVD]` with action `DLV S:10 H:<id>`.
+     - Payload text `"ALERT: TEMPERATURE HIGH"` appears in the center row.
+     - If the text exceeds 124 pixels, it automatically scrolls horizontally (marquee) from right to left smoothly.
+   - Bottom status bar: RX count increments, Storage count reflects bundle consumption.
+
+### 6.4 Stopping IONe
 To cleanly shut down the IONe gateway daemon:
 ```bash
 cd muON-DTN/configs/ione_gateway

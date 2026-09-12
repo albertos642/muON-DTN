@@ -7,15 +7,11 @@ This directory provides a ready-to-run configuration to operate **IONe** (NASA-J
 ## 1. Architectural Overview
 
 ```
-+------------------------------------+          COBS-Encoded Serial/USB          +------------------------------------+
-|       muON-DTN (Node 1)            | ----------------------------------------> |        IONe Gateway (Node 3)       |
-|                                    | <---------------------------------------- |                                    |
-| - Adafruit Feather M0 / ESP32      |        [0x00] [Frame] [CRC16] [0x00]      | - Linux / Raspberry Pi / WSL2      |
-| - BPA (RFC 9171 / RFC 8949)        |                                           | - BPv7 / SDR Database              |
-| - UARTCL-COBS Convergence Layer    |   Baud: 115200 bps                        | - uartcobscli (Induct)             |
-| - Application Endpoint: ipn:1.10   |   Sync: 3B Request -> 7B Response         | - uartcobsclo (Outduct)            |
-|   (e.g., OLED Display / Telemetry) |                                           | - Gateway Endpoint: ipn:3.1        |
-+------------------------------------+                                           +------------------------------------+
++---------------------------+       LoRa (868MHz)       +---------------------------+       UARTCL-COBS (USB)       +---------------------------+
+|      Node A (ipn:1.1)     | <=======================> |      Node B (ipn:2.1)     | <===========================> |   IONe Gateway (ipn:3.1)  |
+| - Sensor Source (BME280)  |                           | - Relay & Storage Gateway |                               | - Linux PC / Gateway      |
+| - LED Actuator (ipn:1.2)  |                           | - OLED Display (ipn:2.10) |                               | - SDR / POSIX FS Store    |
++---------------------------+                           +---------------------------+                               +---------------------------+
 ```
 
 ---
@@ -97,13 +93,18 @@ Create a test message:
 echo '{"cmd":"DISPLAY","text":"Hello from IONe!","alert":true}' > test_msg.json
 ```
 
-Send to the muON application endpoint (Node 1, Service 10):
+Send to the OLED display on Node B (Node 2, Service 10):
 ```bash
 # bpsendfile <source_eid> <destination_eid> <filepath> [class-of-service]
-bpsendfile ipn:3.1 ipn:1.10 test_msg.json
+bpsendfile ipn:3.1 ipn:2.10 test_msg.json
 ```
 
-The outduct `uartcobsclo` will encode the bundle into a COBS frame with CRC-16 CCITT and transmit it over serial. The muON UARTCL-COBS layer will receive, verify CRC, and deliver the payload directly to the OLED display or application listener.
+Or send a command to the LED actuator on Node A via LoRa relay (Node 1, Service 2):
+```bash
+bpsendfile ipn:3.1 ipn:1.2 test_msg.json
+```
+
+The outduct `uartcobsclo` will encode the bundle into a COBS frame with CRC-16 CCITT and transmit it over serial. The muON UARTCL-COBS layer will receive, verify CRC, and deliver the payload directly to the local OLED display (ipn:2.10) or forward across LoRa to Node A (ipn:1.2).
 
 ---
 
